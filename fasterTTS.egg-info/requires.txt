@@ -1,0 +1,6 @@
+asyncio
+torch>=1.8.0
+torchaudio
+librosa
+vllm
+safetensors
