@@ -1,7 +1,7 @@
 import io
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Union, Optional, Tuple
+from typing import Union, Optional, Tuple, List
 import sounddevice as sd
 
 from IPython.display import Audio, display
@@ -17,6 +17,25 @@ class TTSOutput:
     """Container for XTTS inference output with integrated audio utilities"""
     wav: np.ndarray
     sample_rate: int = 24000
+
+    @staticmethod
+    def combilne_outputs(outputs: List['TTSOutput']) -> 'TTSOutput':
+        """Combine multiple TTSOutput instances into a single instance.
+
+        Args:
+            outputs: List of TTSOutput instances
+
+        Returns:
+            New TTSOutput instance with concatenated audio
+        """
+        # Concatenate audio
+        combined_audio = np.concatenate([out.wav for out in outputs])
+
+        # Use sample rate of first output
+        return TTSOutput(
+            wav=combined_audio,
+            sample_rate=outputs[0].sample_rate
+        )
 
     def to_tensor(self) -> Union[torch.Tensor, np.ndarray]:
         """Convert numpy array to torch tensor"""
