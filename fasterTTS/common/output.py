@@ -19,7 +19,7 @@ class TTSOutput:
     sample_rate: int = 24000
 
     @staticmethod
-    def combilne_outputs(outputs: List['TTSOutput']) -> 'TTSOutput':
+    def combine_outputs(outputs: List['TTSOutput']) -> 'TTSOutput':
         """Combine multiple TTSOutput instances into a single instance.
 
         Args:

@@ -290,7 +290,7 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
     ) -> Union[torch.Tensor, "IntermediateTensors"]:
         """Forward pass following VLLM pattern."""
         # it is not the first iter either if the cond latents are emtpy or if the kv_caches are not empty
-        is_first_iteration = (input_ids==1).all()
+        is_first_iteration = len(input_ids) > 1 and (input_ids==1).all()
 
         #assert len(input_ids) == 1 or (cond_latents is not None and not is_first_iteration), "Conditioning data (voice conditioning+text_embeddings) is required for XTTS"
 

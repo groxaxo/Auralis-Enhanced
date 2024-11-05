@@ -14,7 +14,6 @@ class ExtendedSamplingParams(SamplingParams, kw_only=True):
     """
     hidden_state_collector: HiddenStatesCollector  # New required field
 
-
 class LogitsRepetitionPenalizer:
     """A logits processor that applies repetition penalty to prevent repetitive text generation."""
 

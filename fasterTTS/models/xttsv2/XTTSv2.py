@@ -15,8 +15,12 @@ from torch import nn
 
 from vllm import AsyncLLMEngine, AsyncEngineArgs, SamplingParams, TokensPrompt, RequestOutput
 from vllm.multimodal import MultiModalDataDict
+from vllm.sampling_params import RequestOutputKind
 from vllm.utils import Counter
 
+from ..base_tts_engine import BaseAsyncTTSEngine, ConditioningConfig, AudioTokenGenerator, \
+    TokenGeneratorsAndPossiblyConditioning
+from ...common.logger import setup_logger
 from ...common.output import TTSOutput
 from ...common.requests import TTSRequest
 from ...common.utilities import wav_to_mel_cloning, load_audio
@@ -33,7 +37,7 @@ from .components._tts.layers.xtts.latent_encoder import ConditioningEncoder
 from .components._tts.layers.xtts.perceiver_encoder import PerceiverResampler
 
 
-class Xtts(nn.Module):
+class XTTSv2Engine(BaseAsyncTTSEngine):
     """Async XTTS model implementation using VLLM's AsyncEngine."""
 
     def __init__(self,
@@ -43,6 +47,10 @@ class Xtts(nn.Module):
                  tensor_parallel_size: int = 1,
                  **kwargs):
         super().__init__()
+
+        self.logger = setup_logger(__file__)
+        self.logger.info("Initializing XTTSv2Engine...")
+
         self.hifi_config = hifi_config
         self.gpt_config = gpt_config
         self.mel_bos_token_id = gpt_config.start_audio_token
@@ -50,8 +58,7 @@ class Xtts(nn.Module):
         self.tp = tensor_parallel_size
         self.tokenizer = XTTSTokenizerFast.from_pretrained("AstraMindAI/xtts2-gpt")
         self.request_counter = Counter()
-        self.executor = ThreadPoolExecutor(max_workers=4)  # For CPU-bound tasks
-        self.hidden_states_collector = HiddenStatesCollector()
+        self.executor = ThreadPoolExecutor(max_workers=10)  # For CPU-bound tasks
 
         self.max_gb_for_vllm_model = max_gb_for_vllm_model
 
@@ -110,11 +117,19 @@ class Xtts(nn.Module):
         # Initialize VLLM engine at the end
         self.init_vllm_engine()
 
-        # Semaphore for concurrency control
+        # Semaphore for concurrency control of the encoding process
         self.max_concurrency = 10
         self.semaphore = asyncio.BoundedSemaphore(self.max_concurrency)
 
+    @property
+    def conditioning_config(self) -> ConditioningConfig:
+        return ConditioningConfig(
+            speaker_embeddings=True, # noqa
+            gpt_like_decoder_conditioning=True # noqa ?? why it is giving a warning?
+        )
+
     def half(self):
+        self.logger.warning("Cannot call .half() on XTTSv2Engine. it will be ignored.")
         # We cannot permit downcasting since it will throw an error while padding
         return
 
@@ -122,31 +137,14 @@ class Xtts(nn.Module):
         # Block downcasting
         dtype = kwargs.get('dtype', None)
         if dtype == torch.float16 or dtype == torch.bfloat16:
+            self.logger.warning("Cannot cast to half precision. Ignoring the request.")
             kwargs['dtype'] = torch.float32
         elif len(args) > 0 and (args[0] == torch.float16 or args[0] == torch.bfloat16):
+            self.logger.warning("Cannot cast to half precision. Ignoring the request.")
             args = list(args)
             args[0] = torch.float32
             args = tuple(args)
         return super().to(*args, **kwargs)
-
-    @property
-    def device(self):
-        """Get the current device of the model."""
-        return next(self.parameters()).device
-
-    @property
-    def dtype(self):
-        """Get the current dtype of the model."""
-        return next(self.parameters()).dtype
-
-    @staticmethod
-    def get_memory_percentage(memory: int) -> float:
-        """Get memory percentage."""
-        total_memory = torch.cuda.get_device_properties(0).total_memory
-        reserved_memory = torch.cuda.memory_reserved(0)
-        allocated_memory = torch.cuda.memory_allocated(0)
-        available_memory = total_memory - reserved_memory - allocated_memory
-        return memory / available_memory
 
     def init_vllm_engine(self):
         """Initialize models with AsyncVLLMEngine."""
@@ -161,7 +159,7 @@ class Xtts(nn.Module):
             limit_mm_per_prompt={"audio": 1},
             max_num_batched_tokens=608*4,
         )
-
+        self.logger.info(f"Initializing VLLM engine with args: {engine_args}")
         self.llm_engine = AsyncLLMEngine.from_engine_args(engine_args)
 
     @classmethod
@@ -230,23 +228,10 @@ class Xtts(nn.Module):
 
         return model
 
-    @staticmethod
-    def load_audio(audio_path: Union[str, Path], sampling_rate: int = 22050) -> torch.Tensor:
-        audio, lsr = torchaudio.load(audio_path)
-
-        # Stereo to mono if needed
-        if audio.size(0) != 1:
-            audio = torch.mean(audio, dim=0, keepdim=True)
-
-        if lsr != sampling_rate:
-            audio = torchaudio.functional.resample(audio, lsr, sampling_rate)
-
-        # Clip audio invalid values
-        audio.clip_(-1, 1)
-        return audio
-
     @torch.inference_mode()
     def get_speaker_embedding(self, audio, sr):
+
+
         audio_16k = torchaudio.functional.resample(audio, sr, 16000)
         return (
             self.hifigan_decoder.speaker_encoder.forward(audio_16k.to(self.device), l2_norm=True)
@@ -370,7 +355,7 @@ class Xtts(nn.Module):
     async def prepare_text_tokens_async(self, text: str, language: str, split_text=False) \
             -> Tuple[List[Union[int, List[int]]], List[torch.Tensor]]:
         """Prepare text tokens for the given text and language."""
-
+        self.logger.debug(f"Preparing text tokens for text: {text}")
         async def elaborate_tokens(text_tokens: List[int]) -> torch.Tensor:
             text_tokens.insert(0, self.tokenizer.bos_token_id)
             text_tokens.append(self.tokenizer.eos_token_id)
@@ -397,7 +382,8 @@ class Xtts(nn.Module):
             fake_tokens_for_audio_generation = [1] * len(text_tokens)
         return fake_tokens_for_audio_generation, await embed_tokens(text_tokens)
 
-    async def prepare_inputs_async(self, text: str, language: str, speaker_file: Union[str, Path],
+
+    async def prepare_inputs_async(self, text: str, language: str, speaker_file: List[Union[str, Path]],
                                    max_ref_length: int, gpt_cond_len: int, gpt_cond_chunk_len: int, split_text: bool) \
             -> Tuple[List[List[int]], List[torch.Tensor], torch.Tensor]:
         """Prepare input text with conditioning tokens. Return combined conditioning latents"""
@@ -405,7 +391,7 @@ class Xtts(nn.Module):
         text_tokens, text_embeddings = await self.prepare_text_tokens_async(text, language, split_text)
 
         # Load the speaker file and convert it to a tensor
-        gpt_cond_latent, speaker_embeddings = await self.get_conditioning_latents_async(
+        gpt_cond_latent, speaker_embeddings = await self.get_audio_conditioning(
             speaker_file,
             max_ref_length,
             gpt_cond_len,
@@ -420,9 +406,9 @@ class Xtts(nn.Module):
 
         return text_tokens, cond_latents, speaker_embeddings
 
-    async def get_conditioning_latents_async(
+    async def get_audio_conditioning(
             self,
-            audio_path,
+            audio_reference: [str, Path],
             max_ref_length=30,
             gpt_cond_len=6,
             gpt_cond_chunk_len=6,
@@ -436,7 +422,7 @@ class Xtts(nn.Module):
             result = await asyncio.get_event_loop().run_in_executor(
                 None,
                 functools.partial(self.get_conditioning_latents,
-                                  audio_path,
+                                  audio_reference,
                                   max_ref_length,
                                   gpt_cond_len,
                                   gpt_cond_chunk_len,
@@ -446,167 +432,99 @@ class Xtts(nn.Module):
             ) # noqa
         return result
 
-    async def get_model_logits(self,
-                               token_ids: List[int],
-                               conditioning: MultiModalDataDict
-                               ) -> torch.Tensor:
-        """Get model logits for a specific request"""
-        request_id = uuid.uuid4().hex
-
-        # Add start and end tokens
-        token_ids = [self.mel_bos_token_id] + list(token_ids) + [self.mel_eos_token_id] * 4
-
-        engine_inputs = TokensPrompt(prompt_token_ids=token_ids)
-        engine_inputs["multi_modal_data"] = conditioning
-
-        # Bind the collector to this request
-        bound_collector = self.hidden_states_collector.bind_to_request(request_id)
-
-        # Set up sampling parameters with the bound collector
-        sampling_params = ExtendedSamplingParams(
-            detokenize=False,
-            max_tokens=1,
-            hidden_state_collector=bound_collector,
-        )
-
-        # Generate with unique request ID
-        generator = self.llm_engine.generate(
-            prompt=engine_inputs,
-            sampling_params=sampling_params,
-            request_id=request_id
-        )
-
-        # Consume the generator with a timeout
-        try:
-            async def consume_generator():
-                async for _ in generator:
-                    pass
-
-            await asyncio.wait_for(consume_generator(), timeout=300)
-        except asyncio.TimeoutError:
-            raise RuntimeError("Timeout while generating logits")
-
-        # Get the collected hidden states
-        hidden_states = self.hidden_states_collector.get_hidden_states(request_id)
-
-        if hidden_states is None:
-            raise RuntimeError(f"No hidden states collected for request {request_id}")
-
-        return hidden_states[-len(token_ids):, ...].unsqueeze(0).to(self.device).to(self.dtype)
-
-    async def process_tokens_to_speech(
+    async def get_model_logits(
             self,
-            generators: List[AsyncGenerator[RequestOutput, None]],
-            speaker_embeddings: torch.Tensor,
-            multimodal_data: List[torch.Tensor],
-    ) -> AsyncGenerator[TTSOutput, None]:
+            token_ids: List[int],
+            conditioning: MultiModalDataDict,
+            max_retries: int = 3,
+            retry_delay: float = 0.5
+    ) -> torch.Tensor:
         """
-        Process multiple token generators concurrently and emit results in correct sequence.
-        Collects outputs and yields them in order after all processing is done.
-        """
-        # Dictionary to store results with their sequence index
-        results = {}
-        tasks = []
+        Get model logits for a request with retry logic for empty hidden states.
 
-        # Function to process each generator
-        async def process_generator(index, generator, gpt_embed_input):
+        Args:
+            token_ids: Input token IDs
+            conditioning: Conditioning data
+            max_retries: Maximum number of retry attempts
+            retry_delay: Delay between retries in seconds
+        """
+        attempts = 0
+        while attempts < max_retries:
             try:
-                async for output in generator:
-                    if output.finished:
-                        hidden_states = await self.get_model_logits(
-                            output.outputs[0].token_ids,
-                            {
-                                "audio": {
-                                    'embeds': gpt_embed_input,
-                                    "is_logits_only_mode": True
-                                }
-                            }
-                        )
-                        # Generate audio segment
-                        wav = await asyncio.get_event_loop().run_in_executor(
-                            self.executor,
-                            lambda: self.hifigan_decoder.inference(
-                                hidden_states,
-                                g=speaker_embeddings
-                            ).cpu().numpy().squeeze()
-                        )
-                        # Store result with its index
-                        results[index] = TTSOutput(wav=wav)
-            except Exception as e:
-                logging.error(f"Error in generator processing: {e}")
+                request_id = uuid.uuid4().hex
 
-        # Create tasks for processing each generator
-        for i, generator in enumerate(generators):
-            task = asyncio.create_task(
-                process_generator(i, generator, multimodal_data[i])
-            )
-            tasks.append(task)
+                # Add start and end tokens
+                token_ids = [self.mel_bos_token_id] + list(token_ids) + [self.mel_eos_token_id] * 4
 
-        # Wait for all tasks to complete
-        await asyncio.gather(*tasks)
+                engine_inputs = TokensPrompt(prompt_token_ids=token_ids)
+                engine_inputs["multi_modal_data"] = conditioning
 
-        # Sort results based on sequence index
-        for i in sorted(results.keys()): #
-            yield results[i]
+                hidden_states_collector = HiddenStatesCollector()
+                # Bind the collector to this request
+                bound_collector = hidden_states_collector.bind_to_request(request_id)
 
+                # Set up sampling parameters with the bound collector
+                sampling_params = ExtendedSamplingParams(
+                    detokenize=False,
+                    max_tokens=1,
+                    hidden_state_collector=bound_collector,
+                    output_kind=RequestOutputKind.FINAL_ONLY
+                )
 
-    async def generate_speech_async_from_streaming_source(self, request: TTSRequest) -> AsyncGenerator[TTSOutput, None]:
-        """Generate speech for streaming source of text, making a streaming source of audio tokens and then decoding
-        and returning a streaming audio response."""
-        assert isinstance(request.text, AsyncGenerator), "Text must be an AsyncGenerator for streaming source."
-        # Prepare input with conditioning
-        gpt_cond_latent, speaker_embeddings = await self.get_conditioning_latents_async(
-            request.speaker_file,
-            request.max_ref_length,
-            request.gpt_cond_len,
-            request.gpt_cond_chunk_len
-        )
-        sampling_params = SamplingParams(
-            temperature=request.temperature,
-            top_p=request.top_p,
-            detokenize=False,
-            top_k=request.top_k,
-            logits_processors=[LogitsRepetitionPenalizer(request.repetition_penalty)],
-            repetition_penalty=1.0,  # Since we're handling repetition penalty manually
-            max_tokens=self.gpt_config.gpt_max_audio_tokens,
-            ignore_eos=True,  # Ignore the tokenizer eos token since it is for textual generation
-            stop_token_ids=[self.mel_eos_token_id],
-        )
-
-        accumulated_text = ""
-        async for text in request.text:
-            text = text.strip()
-            accumulated_text += text
-
-            if len(accumulated_text) > request.generate_every_n_chars:
-                tokens, embeddings = await self.prepare_text_tokens_async(accumulated_text, request.language)
-                gpt_embed_input = [torch.cat([gpt_cond_latent, embeddings[0]], dim=0)]
-
-                engine_inputs = TokensPrompt(prompt_token_ids=tokens)
-                if gpt_embed_input is not None:
-                    engine_inputs["multi_modal_data"] = {"audio": {"embeds": gpt_embed_input, "is_logits_only_mode": False}}
-                token_generator = [self.llm_engine.generate(
+                # Generate with unique request ID
+                generator = self.llm_engine.generate(
                     prompt=engine_inputs,
                     sampling_params=sampling_params,
-                    request_id=request.request_id,
-                )]
-                # Process tokens to speech
-                async for output in self.process_tokens_to_speech(
-                        token_generator,
-                        speaker_embeddings,
-                        gpt_embed_input,
-                ):
-                    yield output
+                    request_id=request_id
+                )
 
-                accumulated_text = ""
+                async for output in generator:  # consume the generator
+                    if output.finished:
+                        pass
 
-    async def generate_speech_from_text_async(self, request: TTSRequest) -> AsyncGenerator[TTSOutput, None]:
-        """Generate speech for a single request asynchronously."""
+                # Get the collected hidden states
+                hidden_states = await hidden_states_collector.get_hidden_states(request_id)
+
+                if hidden_states is None:
+                    attempts += 1
+                    if attempts < max_retries:
+                        self.logger.warning(
+                            f"No hidden states collected for request {request_id} (attempt {attempts}/{max_retries}). "
+                            f"Retrying after {retry_delay}s..."
+                        )
+                        await asyncio.sleep(retry_delay)
+                        continue
+                    else:
+                        raise RuntimeError(
+                            f"No hidden states collected for request {request_id} after {max_retries} attempts. "
+                            f"This should never happen! Please report this issue on GitHub."
+                        )
+
+                # Successfully got hidden states
+                return hidden_states[-len(token_ids):-4, ...].unsqueeze(0).to(self.device).to(self.dtype)
+
+            except Exception as e:
+                attempts += 1
+                if attempts < max_retries:
+                    self.logger.warning(
+                        f"Error getting hidden states (attempt {attempts}/{max_retries}): {str(e)}. "
+                        f"Retrying after {retry_delay}s..."
+                    )
+                    await asyncio.sleep(retry_delay)
+                    continue
+                else:
+                    self.logger.critical(f"Failed to get hidden states after {max_retries} attempts")
+                    raise
+
+
+    async def get_generation_context(self,
+                                     request: TTSRequest,
+                                     ) -> TokenGeneratorsAndPossiblyConditioning:
         # Prepare input with conditioning
-        tokens_list, gpt_embed_inputs, speaker_embeddings = await self.prepare_inputs_async( #400mb is dim agnostic?
+        tokens_list, gpt_embed_inputs, speaker_embeddings = await self.prepare_inputs_async(
             request.text,
             request.language,
-            request.speaker_file,
+            request.speaker_files,
             request.max_ref_length,
             request.gpt_cond_len,
             request.gpt_cond_chunk_len,
@@ -615,6 +533,7 @@ class Xtts(nn.Module):
 
         # Start all requests in parallel
         generators = []
+        requests_id = []
         for seq_index, sequence in enumerate(tokens_list):
             sampling_params = SamplingParams(
                 temperature=request.temperature,
@@ -626,61 +545,67 @@ class Xtts(nn.Module):
                 max_tokens=self.gpt_config.gpt_max_audio_tokens,
                 ignore_eos=True,  # Ignore the tokenizer eos token since it is for textual generation
                 stop_token_ids=[self.mel_eos_token_id],
+                output_kind=RequestOutputKind.FINAL_ONLY
             )
 
             engine_inputs = TokensPrompt(prompt_token_ids=sequence)
             if gpt_embed_inputs is not None:
-                engine_inputs["multi_modal_data"] = {"audio": {"embeds": gpt_embed_inputs[seq_index], "is_logits_only_mode": False}}
-
+                engine_inputs["multi_modal_data"] = {
+                    "audio": {"embeds": gpt_embed_inputs[seq_index], "is_logits_only_mode": False}}
+            request_id =f"{request.request_id}_{seq_index}"
             # Get audio token generator from VLLM
             token_generator = self.llm_engine.generate(
                 prompt=engine_inputs,
                 sampling_params=sampling_params,
-                request_id=f"{request.request_id}_{seq_index}",
+                request_id=request_id,
             )
             generators.append(token_generator)
+            requests_id.append(request_id)
 
-        # Process tokens to speech
-        async for output in self.process_tokens_to_speech(
-                generators,
-                speaker_embeddings,
-                gpt_embed_inputs,
-        ):
-            yield output
+        return generators, requests_id, speaker_embeddings, gpt_embed_inputs
 
-    def generate_speech_from_text(self, request: TTSRequest) -> TTSOutput:
+
+    async def process_tokens_to_speech(
+        self,
+        generator: AsyncGenerator[RequestOutput, None],
+        speaker_embeddings: Optional[torch.Tensor] = None,
+        multimodal_data: Optional[torch.Tensor] = None,
+    ) -> AsyncGenerator[TTSOutput, None]:
         """
-        Synchronous wrapper for generate_speech_from_text_async.
-
-        Args:
-            request: XTTSRequest object containing generation parameters
-
-        Returns:
-            List of XTTSOutput containing the generated speech segments
+        Process a single token generator and emit results.
         """
 
-        async def _collect_outputs():
-            outputs = []
-            async for output in self.generate_speech_from_text_async(request):
-                outputs.append(output)
-            return outputs
+        assert speaker_embeddings is not None, "Speaker embeddings must be provided for speech generation with XTTSv2."
+        assert multimodal_data is not None, "Multimodal data must be provided for speech generation with XTTSv2."
 
-        # Run the async code in an event loop
-        import asyncio
-
-        # Get or create an event loop
         try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            async for output in generator:
+                if output.finished:
+                    # get the hidden states
+                    hidden_states = await self.get_model_logits(
+                        list(output.outputs[0].token_ids),
+                        {
+                            "audio": {
+                                'embeds': multimodal_data,  # Use multimodal data for conditioning
+                                "is_logits_only_mode": True
+                            }
+                        }
+                    )
 
-        if loop.is_running():
-            # Create a new loop if the current one is running
-            new_loop = asyncio.new_event_loop()
-            results = new_loop.run_until_complete(_collect_outputs())
-            new_loop.close()
-        else:
-            results = loop.run_until_complete(_collect_outputs())
+                    # Genera il segmento audio
+                    wav = await asyncio.get_event_loop().run_in_executor(
+                        self.executor,
+                        lambda: self.hifigan_decoder.inference(
+                            hidden_states,
+                            g=speaker_embeddings
+                        ).cpu().numpy().squeeze()
+                    )
 
-        return TTSOutput.combilne_outputs(results)
+                    # Yield il risultato direttamente
+                    yield TTSOutput(wav=wav)
+
+        except Exception as e:
+            logging.error(f"Error in generator processing: {e}")
+            raise # Re-raise the exception
+
+

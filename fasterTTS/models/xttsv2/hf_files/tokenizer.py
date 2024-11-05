@@ -39,36 +39,130 @@ def get_spacy_lang(lang):
         # For most languages, English does the job
         return English()
 
-def split_sentence(text, lang, text_split_length=250):
-    """Preprocess the input text and split into sentences based on language."""
-    text_splits = []
-    if text_split_length is not None and len(text) >= text_split_length:
-        text_splits.append("")
-        nlp = get_spacy_lang(lang)
+
+def find_best_split_point(text: str, target_pos: int, window_size: int = 30) -> int:
+    """
+    Find best split point near target position considering punctuation and language markers.
+    added for better sentence splitting in TTS.
+    """
+    # Define split markers by priority
+    markers = [
+        # Strong breaks (longest pause)
+        (r'[.!?؟။။။]+[\s]*', 1.0),  # Periods, exclamation, question (multi-script)
+        (r'[\n\r]+\s*[\n\r]+', 1.0),  # Multiple newlines
+        (r'[:|;；：；][\s]*', 0.9),  # Colons, semicolons (multi-script)
+
+        # Medium breaks
+        (r'[,，،、][\s]*', 0.8),  # Commas (multi-script)
+        (r'[)}\]）】』»›》\s]+', 0.7),  # Closing brackets/parentheses
+        (r'[-—−]+[\s]*', 0.7),  # Dashes
+
+        # Weak breaks
+        (r'\s+[&+=/\s]+\s+', 0.6),  # Special characters with spaces
+        (r'[\s]+', 0.5),  # Any whitespace as last resort
+    ]
+
+    # Calculate window boundaries
+    start = max(0, target_pos - window_size)
+    end = min(len(text), target_pos + window_size)
+    window = text[start:end]
+
+    best_pos = target_pos
+    best_score = 0
+
+    for pattern, priority in markers:
+        matches = list(re.finditer(pattern, window))
+        for match in matches:
+            # Calculate position score based on distance from target
+            pos = start + match.end()
+            distance = abs(pos - target_pos)
+            distance_score = 1 - (distance / (window_size * 2))
+
+            # Combine priority and position scores
+            score = priority * distance_score
+
+            if score > best_score:
+                best_score = score
+                best_pos = pos
+
+    return best_pos
+
+
+def split_sentence(text: str, lang: str, text_split_length: int = 250) -> List[str]:
+    """
+    Enhanced sentence splitting with language awareness and optimal breakpoints.
+
+    Args:
+        text: Input text to split
+        lang: Language code
+        text_split_length: Target length for splits
+
+    Returns:
+        List of text splits optimized for TTS
+    """
+    text = text.strip()
+    if len(text) <= text_split_length:
+        return [text]
+
+    nlp = get_spacy_lang(lang)
+    if "sentencizer" not in nlp.pipe_names:
         nlp.add_pipe("sentencizer")
-        doc = nlp(text)
-        for sentence in doc.sents:
-            if len(text_splits[-1]) + len(str(sentence)) <= text_split_length:
-                text_splits[-1] += " " + str(sentence)
-                text_splits[-1] = text_splits[-1].lstrip()
-            elif len(str(sentence)) > text_split_length:
-                for line in textwrap.wrap(
-                    str(sentence),
-                    width=text_split_length,
-                    drop_whitespace=True,
-                    break_on_hyphens=False,
-                    tabsize=1,
-                ):
-                    text_splits.append(str(line))
-            else:
-                text_splits.append(str(sentence))
 
-        if len(text_splits) > 1 and text_splits[0] == "":
-                del text_splits[0]
-    else:
-        text_splits = [text.lstrip()]
+    # Get base sentences using spaCy
+    doc = nlp(text)
+    sentences = list(doc.sents)
 
-    return text_splits
+    splits = []
+    current_split = []
+    current_length = 0
+
+    for sent in sentences:
+        sentence_text = str(sent).strip()
+        sentence_length = len(sentence_text)
+
+        # If sentence fits in current split
+        if current_length + sentence_length <= text_split_length:
+            current_split.append(sentence_text)
+            current_length += sentence_length + 1
+
+        # Handle long sentences
+        elif sentence_length > text_split_length:
+            # Add current split if exists
+            if current_split:
+                splits.append(" ".join(current_split))
+                current_split = []
+                current_length = 0
+
+            # Split long sentence at optimal points
+            remaining = sentence_text
+            while len(remaining) > text_split_length:
+                split_pos = find_best_split_point(
+                    remaining,
+                    text_split_length,
+                    window_size=30
+                )
+
+                # Add split and continue with remainder
+                splits.append(remaining[:split_pos].strip())
+                remaining = remaining[split_pos:].strip()
+
+            # Handle remaining text
+            if remaining:
+                current_split = [remaining]
+                current_length = len(remaining)
+
+        # Start new split
+        else:
+            splits.append(" ".join(current_split))
+            current_split = [sentence_text]
+            current_length = sentence_length
+
+    # Add final split if needed
+    if current_split:
+        splits.append(" ".join(current_split))
+
+    # Clean up splits
+    return [s for s in splits if s]
 
 _whitespace_re = re.compile(r"\s+")
 
