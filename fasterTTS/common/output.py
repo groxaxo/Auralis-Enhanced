@@ -15,8 +15,9 @@ import torchaudio
 @dataclass
 class TTSOutput:
     """Container for XTTS inference output with integrated audio utilities"""
-    wav: np.ndarray
-    sample_rate: int = 24000
+    wav: Optional[np.ndarray] = None
+    error: Optional[str] = None
+    sample_rate: Optional[int] = 24000
 
     @staticmethod
     def combine_outputs(outputs: List['TTSOutput']) -> 'TTSOutput':
@@ -36,6 +37,10 @@ class TTSOutput:
             wav=combined_audio,
             sample_rate=outputs[0].sample_rate
         )
+
+    @staticmethod
+    def error_output(error_message: str) -> 'TTSOutput':
+        return TTSOutput(error=error_message)
 
     def to_tensor(self) -> Union[torch.Tensor, np.ndarray]:
         """Convert numpy array to torch tensor"""

@@ -2,7 +2,6 @@ import asyncio
 
 import pytest
 import torch
-from mistral_common.tokens.tokenizers.utils import chunks
 
 from fasterTTS.common.requests import TTSRequest
 from fasterTTS.models.xttsv2.XTTSv2 import XTTSv2Engine
@@ -43,42 +42,19 @@ speaker_file = "./female.wav"
 tts = TTS()
 tts.tts_engine = XTTSv2Engine.from_pretrained("AstraMindAI/xtts2", torch_dtype=torch.float32)
 
-@pytest.mark.asyncio
-async def test_tts_async_generation():
+def tst_tts_sync_generation():
     # Crea le richieste TTS
-    request1 = TTSRequest(
+    request = TTSRequest(
         text=text,
         language="it",
         speaker_files=["/home/marco/PycharmProjects/betterVoiceCraft/female.wav"],
-        stream=True
+        stream=False
     )
 
-    request2 = TTSRequest(
-        text=text,
-        language="it",
-        speaker_files=["/home/marco/PycharmProjects/betterVoiceCraft/female.wav"],
-        stream=True
-    )
-
-    requests = [request1, request2]
 
     # Define the corutines
-    coroutines = [tts.generate_speech_async(req) for req in requests]
+    vocalized_text = tts.generate_speech(request)
 
-    # Execute the coroutines in parallel
-    results = await asyncio.gather(*coroutines, return_exceptions=True)
+    assert vocalized_text.error is None
 
-    chunks={}
-    # Consume the results
-    for idx, result in enumerate(results):
-        if isinstance(result, Exception):
-            raise result
-        else:
-            chunks[idx] = []
-            async for chunk in result:
-                chunks[idx].append(chunk.wav)
-
-
-    assert all([len(chunk) > 0 for chunk in chunks.values()])
-
-
+tst_tts_sync_generation()

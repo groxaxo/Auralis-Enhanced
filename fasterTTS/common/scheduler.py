@@ -9,6 +9,7 @@ from collections import OrderedDict
 
 
 from fasterTTS.common.logger import setup_logger
+from fasterTTS.common.output import TTSOutput
 
 T = TypeVar('T')
 R = TypeVar('R')
@@ -42,7 +43,7 @@ class GeneratorTwoPhaseScheduler:
     def __init__(
             self,
             second_phase_concurrency: int = 10,
-            timeout: float = 30.0
+            timeout: float = 5.0
     ):
         self.logger = setup_logger(__file__)
         self.second_phase_concurrency = second_phase_concurrency
@@ -55,7 +56,7 @@ class GeneratorTwoPhaseScheduler:
         self.completed_tasks: Dict[str, GeneratorPhasedTask] = {}
 
         # Output buffer for maintaining order
-        self.output_buffer: OrderedDict[int, List[Any]] = OrderedDict()
+        self.output_buffer: OrderedDict[int, List[Any]] = OrderedDict() # sia questo che quello sotto non sono async safe davver, con tante richieste si sovraporrebbero alcuyni valori.
         self.next_sequence_to_yield = 0
         self.output_available_event = asyncio.Event()
 
@@ -73,9 +74,6 @@ class GeneratorTwoPhaseScheduler:
             self.first_phase_tasks[task.id] = task
             task.context = await first_phase_fn(task.first_phase_input, task.metadata)
             task.phase = TaskPhase.SECOND
-
-            # Initialize buffer for this task's sequence
-            self.output_buffer[task.sequence_order] = []
 
             # Start the second phase immediately
             asyncio.create_task(self.execute_second_phase(task, second_phase_fn, task.context['parallel_inputs']))
@@ -117,6 +115,8 @@ class GeneratorTwoPhaseScheduler:
             # Create tasks for parallel processing
             generator_tasks = []
             for idx, gen_input in enumerate(parallel_inputs):
+                # Initialize buffer for this task's sequence
+                self.output_buffer[idx] = []
                 if task.context and 'request_ids' in task.context:
                     self.logger.info(f"Consuming generator for request id: {task.context['request_ids'][idx]}")
                 generator = second_phase_fn(gen_input, task.metadata)
@@ -124,7 +124,7 @@ class GeneratorTwoPhaseScheduler:
                     self.process_parallel_generator(
                         generator=generator,
                         context=task.context,
-                        sequence_order=task.sequence_order,
+                        sequence_order=idx,
                         metadata=task.metadata
                     )
                 )
@@ -135,7 +135,7 @@ class GeneratorTwoPhaseScheduler:
             task.phase = TaskPhase.COMPLETED
             execution_time = time.time() - task.start_time
             self.logger.info(
-                f"Second phase completed successfully for task {task.id}. "
+                f"Audio generation completed successfully for task {task.id}. "
                 f"Execution time: {execution_time:.2f}s"
             )
 
@@ -155,30 +155,56 @@ class GeneratorTwoPhaseScheduler:
             # Log final status
             status = "completed successfully" if task.phase == TaskPhase.COMPLETED else f"failed with error: {task.error}"
             total_time = time.time() - task.start_time
-            self.logger.info(
+            self.logger.debug(
                 f"Task {task.id} {status}. "
                 f"Total execution time: {total_time:.2f}s"
             )
 
+            # If task failed, set output buffer to signal completion
+            if task.phase == TaskPhase.FAILED:
+                self.output_buffer[task.sequence_order] = [TTSOutput(error=str(task.error))]
+                self.output_available_event.set()
+
+
     async def yield_ordered_outputs(self) -> AsyncGenerator[Any, None]:
         """Yield outputs in correct sequence order as they become available."""
-        while self.output_buffer:
-            if self.next_sequence_to_yield in self.output_buffer:
+        while True:
+            if self.next_sequence_to_yield in self.output_buffer and len(self.output_buffer[self.next_sequence_to_yield]) > 0:
                 buffer = self.output_buffer[self.next_sequence_to_yield]
 
                 while buffer:  # Process all available items for current sequence
-                    yield buffer.pop(0)
+                    item = buffer.pop(0)
+                    yield item
 
-                if not buffer:  # If buffer is empty, remove it and advance sequence
-                    self.output_buffer.pop(self.next_sequence_to_yield)
-                    self.next_sequence_to_yield += 1
+                # Remove the empty buffer entry and advance sequence
+                self.output_buffer.pop(self.next_sequence_to_yield)
+                self.next_sequence_to_yield += 1
             else:
+                # Check if the next_sequence_to_yield has failed
+                failed_tasks = [
+                    t for t in self.completed_tasks.values()
+                    if t.sequence_order == self.next_sequence_to_yield and t.phase == TaskPhase.FAILED
+                ]
+                if failed_tasks:
+                    task = failed_tasks[0]
+
+                    self.logger.error(f"Task {task.id} failed: {task.error}")
+                    yield TTSOutput(error=str(task.error))
+                    self.output_buffer.pop(self.next_sequence_to_yield, None)
+                    self.next_sequence_to_yield += 1
+                    continue
+
                 # Check if all tasks are completed
                 if not self.output_buffer and not self.pending_tasks and not self.first_phase_tasks and not self.second_phase_tasks:
                     break
+
                 # Wait for more output to become available
                 self.output_available_event.clear()
-                await self.output_available_event.wait()
+                try:
+                    await asyncio.wait_for(self.output_available_event.wait(), timeout=self.timeout)
+                except asyncio.TimeoutError:
+                    self.logger.warning("Timeout waiting for output_available_event.")
+                    break
 
     async def run(
             self,
