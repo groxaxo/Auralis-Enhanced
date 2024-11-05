@@ -7,6 +7,7 @@ from enum import Enum
 import time
 from collections import OrderedDict
 
+
 from fasterTTS.common.logger import setup_logger
 
 T = TypeVar('T')
@@ -22,7 +23,7 @@ class TaskPhase(Enum):
 @dataclass
 class GeneratorPhasedTask:
     """Task for two-phase generator execution."""
-    id: int
+    id: str
     sequence_order: int  # New field to track original input order
     first_phase_input: Any
     metadata: Dict[str, Any]
@@ -35,7 +36,7 @@ class GeneratorPhasedTask:
 
 class GeneratorTwoPhaseScheduler:
     """
-    Scheduler for managing two-phase generator processes with true parallel processing
+    Scheduler for managing two-phase generator processes with parallel processing
     while maintaining ordered output.
     """
     def __init__(
@@ -48,10 +49,10 @@ class GeneratorTwoPhaseScheduler:
         self.timeout = timeout
 
         # Task tracking
-        self.pending_tasks: Dict[int, GeneratorPhasedTask] = {}
-        self.first_phase_tasks: Dict[int, GeneratorPhasedTask] = {}
-        self.second_phase_tasks: Dict[int, GeneratorPhasedTask] = {}
-        self.completed_tasks: Dict[int, GeneratorPhasedTask] = {}
+        self.pending_tasks: Dict[str, GeneratorPhasedTask] = {}
+        self.first_phase_tasks: Dict[str, GeneratorPhasedTask] = {}
+        self.second_phase_tasks: Dict[str, GeneratorPhasedTask] = {}
+        self.completed_tasks: Dict[str, GeneratorPhasedTask] = {}
 
         # Output buffer for maintaining order
         self.output_buffer: OrderedDict[int, List[Any]] = OrderedDict()
@@ -158,6 +159,7 @@ class GeneratorTwoPhaseScheduler:
                 f"Task {task.id} {status}. "
                 f"Total execution time: {total_time:.2f}s"
             )
+
     async def yield_ordered_outputs(self) -> AsyncGenerator[Any, None]:
         """Yield outputs in correct sequence order as they become available."""
         while self.output_buffer:
@@ -171,6 +173,9 @@ class GeneratorTwoPhaseScheduler:
                     self.output_buffer.pop(self.next_sequence_to_yield)
                     self.next_sequence_to_yield += 1
             else:
+                # Check if all tasks are completed
+                if not self.output_buffer and not self.pending_tasks and not self.first_phase_tasks and not self.second_phase_tasks:
+                    break
                 # Wait for more output to become available
                 self.output_available_event.clear()
                 await self.output_available_event.wait()
@@ -188,13 +193,13 @@ class GeneratorTwoPhaseScheduler:
         # Initialize all tasks with sequence order
         for i, (input_data, metadata) in enumerate(zip(inputs, metadata_list)):
             task = GeneratorPhasedTask(
-                id=i,
+                id=uuid.uuid4().hex,
                 sequence_order=i,
                 first_phase_input=input_data,
                 metadata=metadata,
                 phase=TaskPhase.FIRST
             )
-            self.pending_tasks[i] = task
+            self.pending_tasks[task.id] = task
             asyncio.create_task(
                 self.execute_first_phase(task, first_phase_fn, second_phase_fn)
             )

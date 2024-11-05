@@ -78,7 +78,6 @@ class HiddenStatesCollector:
 
             # Wait for completion using threading.Event
             if not self.collection_complete[request_id].wait(timeout):
-                self.logger.error(f"Timeout waiting for hidden states collection: {request_id}")
                 return None
 
             with self.locks[request_id]:

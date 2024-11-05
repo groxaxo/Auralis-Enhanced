@@ -1,4 +1,6 @@
 import asyncio
+import queue
+import threading
 from typing import AsyncGenerator, Optional, Dict, Any, Union, Generator, List
 
 from fasterTTS.common.output import TTSOutput
@@ -73,6 +75,45 @@ class TTS:
         except Exception as e:
             raise e
 
+    async def _second_phase_fn(self, gen_input: Any, metadata: Dict[str, Any]) -> AsyncGenerator[Any, None]:
+        """
+        Second phase: Generate speech using the existing TTS engine.
+        """
+        # gen_input contiene la richiesta TTS
+        request: TTSRequest = gen_input
+
+        async for chunk in self._process_single_generator(gen_input, metadata):
+            yield chunk
+
+    async def generate_speech_async(self, requests: Union[TTSRequest, List[TTSRequest]]) -> Union[AsyncGenerator[TTSOutput, None], TTSOutput]:
+        """Generate speech for single or multiple requests asynchronously."""
+        if not isinstance(requests, list):
+            requests = [requests]
+
+        if requests[0].stream:
+            async def async_gen():
+                metadata = [{'request': req} for req in requests]
+                async for chunk in self.scheduler.run(
+                    inputs=requests,
+                    metadata_list=metadata,
+                    first_phase_fn=self._prepare_generation_context,
+                    second_phase_fn=self._second_phase_fn
+                ):
+                    yield chunk
+
+            return async_gen()
+        else:
+            metadata = [{'request': req} for req in requests]
+            complete_audio = []
+            async for chunk in self.scheduler.run(
+                    inputs=requests,
+                    metadata_list=metadata,
+                    first_phase_fn=self._prepare_generation_context,
+                    second_phase_fn=self._second_phase_fn
+            ):
+                complete_audio.append(chunk)
+            return TTSOutput.combine_outputs(complete_audio)
+
     def generate_speech(self, requests: Union[TTSRequest, List[TTSRequest]]) -> Union[Generator[TTSOutput, None, None], TTSOutput]:
         """Generate speech for single or multiple requests."""
         if not isinstance(requests, list):
@@ -80,29 +121,41 @@ class TTS:
 
         if requests[0].stream:
             def sync_generator():
+                q = queue.Queue()
+
                 async def async_gen():
                     metadata = [{'request': req} for req in requests]
-                    async for chunk in self.scheduler.run(
-                        inputs=requests,
-                        metadata_list=metadata,
-                        first_phase_fn=self._prepare_generation_context,
-                        second_phase_fn=self._process_single_generator
-                    ):
-                        yield chunk
-
-                try:
-                    loop = asyncio.get_event_loop()
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-
-                agen = async_gen()
-                while True:
                     try:
-                        chunk = loop.run_until_complete(agen.__anext__())
-                        yield chunk
-                    except StopAsyncIteration:
+                        async for chunk in self.scheduler.run(
+                            inputs=requests,
+                            metadata_list=metadata,
+                            first_phase_fn=self._prepare_generation_context,
+                            second_phase_fn=self._second_phase_fn
+                        ):
+                            q.put(chunk)
+                    except Exception as e:
+                        q.put(e)
+                    finally:
+                        q.put(None)  # Sentinel to indicate completion
+
+                def run_async_gen():
+                    try:
+                        asyncio.run(async_gen())
+                    except Exception as e:
+                        q.put(e)
+                    finally:
+                        q.put(None)
+
+                # Avvia la coroutine in un nuovo thread con il proprio event loop
+                threading.Thread(target=run_async_gen, daemon=True).start()
+
+                while True:
+                    item = q.get()
+                    if item is None:
                         break
+                    if isinstance(item, Exception):
+                        raise item
+                    yield item
 
             return sync_generator()
         else:
@@ -119,7 +172,7 @@ class TTS:
                         inputs=requests,
                         metadata_list=metadata,
                         first_phase_fn=self._prepare_generation_context,
-                        second_phase_fn=self._process_single_generator
+                        second_phase_fn=self._second_phase_fn
                 ):
                     complete_audio.append(chunk)
                 return TTSOutput.combine_outputs(complete_audio)

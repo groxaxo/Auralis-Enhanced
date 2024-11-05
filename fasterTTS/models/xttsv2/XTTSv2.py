@@ -437,7 +437,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             token_ids: List[int],
             conditioning: MultiModalDataDict,
             max_retries: int = 3,
-            retry_delay: float = 0.5
+            retry_delay: float = 0.1
     ) -> torch.Tensor:
         """
         Get model logits for a request with retry logic for empty hidden states.
