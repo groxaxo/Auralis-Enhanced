@@ -74,11 +74,12 @@ async def test_tts_async_generation():
         if isinstance(result, Exception):
             raise result
         else:
-            chunks[idx] = []
+            chunks[idx] = [chunk async for chunk in result]
+
+            # Since result is an async generator, we can iterate over it
             async for chunk in result:
-                chunks[idx].append(chunk.wav)
+                print(f"Chunk of request {idx}: {chunk}")
 
-
-    assert all([len(chunk) > 0 for chunk in chunks.values()])
+    assert [len(chunk) > 0 for chunk in chunks.values()]
 
 

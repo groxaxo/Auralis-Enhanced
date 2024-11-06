@@ -1,12 +1,12 @@
 import asyncio
 import queue
 import threading
-from typing import AsyncGenerator, Optional, Dict, Any, Union, Generator, List
+from typing import AsyncGenerator, Optional, Dict, Union, Generator, List
 
 from fasterTTS.common.output import TTSOutput
 from fasterTTS.common.requests import TTSRequest
 from fasterTTS.common.scheduler import GeneratorTwoPhaseScheduler
-from fasterTTS.models.base_tts_engine import BaseAsyncTTSEngine
+from fasterTTS.models.base_tts_engine import BaseAsyncTTSEngine, AudioOutputGenerator
 
 
 class TTS:
@@ -64,8 +64,7 @@ class TTS:
             'request': input_request
         }
 
-    async def _process_single_generator(self, gen_input: Dict) -> AsyncGenerator[
-        TTSOutput, None]:
+    async def _process_single_generator(self, gen_input: Dict) -> AudioOutputGenerator:
         """Process a single generator with its associated data."""
         try:
             async for chunk in self.tts_engine.process_tokens_to_speech( # type: ignore
@@ -77,12 +76,10 @@ class TTS:
         except Exception as e:
             raise e
 
-    async def _second_phase_fn(self, gen_input: Any) -> AsyncGenerator[Any, None]:
+    async def _second_phase_fn(self, gen_input: Dict) -> AudioOutputGenerator:
         """
         Second phase: Generate speech using the existing TTS engine.
         """
-        # gen_input contiene la richiesta TTS
-        request: TTSRequest = gen_input
 
         async for chunk in self._process_single_generator(gen_input):
             yield chunk

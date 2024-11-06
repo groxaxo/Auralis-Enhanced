@@ -30,4 +30,7 @@ class TTSRequest:
     length_penalty: float = 1.0
     do_sample: bool = True
 
-
+    def copy(self):
+        return TTSRequest(
+            **self.__dict__
+        )

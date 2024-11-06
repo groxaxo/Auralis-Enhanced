@@ -2,172 +2,285 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, List, AsyncGenerator, Callable, TypeVar, Awaitable
 import asyncio
+import logging
 from enum import Enum
 import time
-from collections import OrderedDict, defaultdict
+from collections import defaultdict
 
-from fasterTTS.common.logger import setup_logger
-from fasterTTS.common.output import TTSOutput
-from fasterTTS.common.requests import TTSRequest
-from fasterTTS.models.base_tts_engine import AudioTokenGenerator, AudioOutputGenerator
+from FasterTTS import setup_logger
 
 T = TypeVar('T')
 R = TypeVar('R')
 
-class TaskPhase(Enum):
-    """Generic phases for a two-phase task execution."""
-    FIRST = "first_phase"
-    SECOND = "second_phase"
+
+class TaskState(Enum):
+    QUEUED = "queued"
+    PROCESSING_FIRST = "processing_first"
+    PROCESSING_SECOND = "processing_second"
     COMPLETED = "completed"
     FAILED = "failed"
 
+
 @dataclass
-class GeneratorPhasedTask:
-    """Task for two-phase generator execution."""
-    request_id: str  # ID della richiesta originale
-    sub_task_id: int  # Indice all'interno della richiesta per gestire i generatori multipli
-    global_order: int  # Ordine globale per preservare l'ordinamento originale
-    first_phase_input: Any
-    phase: TaskPhase
-    context: Any = None
+class QueuedRequest:
+    id: str
+    input: Any
+    state: TaskState = TaskState.QUEUED
     error: Optional[Exception] = None
+    first_phase_result: Any = None
+    generators_count: int = 0
+    completed_generators: int = 0
+    first_fn: Callable = None
+    second_fn: Callable = None
+    sequence_buffers: Dict[int, List[Any]] = field(default_factory=lambda: defaultdict(list))
+    next_sequence_to_yield: int = 0
     start_time: float = field(default_factory=time.time)
-    output_items: List[Any] = field(default_factory=list)
-    output_ready_event: asyncio.Event = field(default_factory=asyncio.Event)
+    completion_event: asyncio.Event = field(default_factory=asyncio.Event)
+
 
 class GeneratorTwoPhaseScheduler:
-    """
-    Scheduler for managing two-phase generator processes with parallel processing
-    while maintaining ordered output.
-    """
     def __init__(
             self,
             second_phase_concurrency: int = 10,
-            timeout: float = 5.0
+            request_timeout: float = 300.0,
+            generator_timeout: float = 30.0
     ):
-        self.logger = setup_logger(__file__)
+        self.logger = setup_logger(__file__, logging.DEBUG)
         self.second_phase_concurrency = second_phase_concurrency
-        self.timeout = timeout
+        self.request_timeout = request_timeout
+        self.generator_timeout = generator_timeout
 
-        # Task tracking per request_id
-        self.tasks: Dict[str, Dict[int, GeneratorPhasedTask]] = defaultdict(dict)
-        self.output_buffer: Dict[str, OrderedDict[int, List[Any]]] = defaultdict(OrderedDict)
-        self.next_to_yield: Dict[str, int] = defaultdict(int)
+        # Queues and state tracking
+        self.request_queue: asyncio.Queue[QueuedRequest] = None
+        self.active_requests: Dict[str, QueuedRequest] = {}
+        self.second_phase_sem = None
 
-        # Semaphore for second phase concurrency
-        self.second_phase_sem = asyncio.Semaphore(second_phase_concurrency)
-        self.buffer_lock = asyncio.Lock()
+        self.is_running = False
+        self.queue_processor_task = None
 
-    async def execute_first_phase(
+    async def start(self):
+        """Initialize async components and start the queue processor."""
+        if self.is_running:
+            return
+
+        self.logger.debug("Starting the scheduler...")
+
+        self.request_queue = asyncio.Queue()
+        self.second_phase_sem = asyncio.Semaphore(self.second_phase_concurrency)
+        self.is_running = True
+        self.queue_processor_task = asyncio.create_task(self._process_queue())
+
+    async def _process_queue(self):
+        """Main queue processor that handles incoming requests."""
+        while self.is_running:
+            try:
+                request = await self.request_queue.get()
+                if request.state != TaskState.QUEUED:
+                    continue
+
+                # Start processing the request
+                self.active_requests[request.id] = request
+                asyncio.create_task(self._process_request(request))
+
+            except Exception as e:
+                self.logger.error(f"Error in queue processor: {e}")
+                await asyncio.sleep(1)  # Prevent tight loop on persistent errors
+
+    async def _process_request(
             self,
-            task: GeneratorPhasedTask,
-            first_phase_fn: Callable[[TTSRequest], Awaitable[Any]],
-            second_phase_fn: Callable[[AudioTokenGenerator], AudioOutputGenerator]
-    ) -> None:
-        """Execute first phase to create context."""
+            request: QueuedRequest,
+    ):
+        """Process a single request through both phases."""
         try:
-            task.context = await first_phase_fn(task.first_phase_input)
-            task.phase = TaskPhase.SECOND
-
-            # Process parallel generators maintaining order
-            for idx, gen_input in enumerate(task.context['parallel_inputs']):
-                sub_task = GeneratorPhasedTask(
-                    request_id=task.request_id,
-                    sub_task_id=idx,
-                    global_order=task.global_order * 1000 + idx,  # Preserve ordering
-                    first_phase_input=gen_input,
-                    phase=TaskPhase.SECOND
+            # First phase processing
+            request.state = TaskState.PROCESSING_FIRST
+            try:
+                request.first_phase_result = await asyncio.wait_for(
+                    request.first_fn(request.input),
+                    timeout=self.request_timeout
                 )
-                self.tasks[task.request_id][sub_task.global_order] = sub_task
-                asyncio.create_task(self.execute_second_phase(sub_task, second_phase_fn))
+            except asyncio.TimeoutError:
+                raise TimeoutError(f"First phase timed out after {self.request_timeout}s")
 
+            # Extract parallel inputs
+            parallel_inputs = request.first_phase_result.get('parallel_inputs', [])
+            request.generators_count = len(parallel_inputs)
+
+            # Start second phase processing
+            request.state = TaskState.PROCESSING_SECOND
+            generator_tasks = []
+            for sequence_idx, gen_input in enumerate(parallel_inputs):
+                task = asyncio.create_task(
+                    self._process_generator(
+                        request=request,
+                        generator_input=gen_input,
+                        sequence_idx=sequence_idx,
+                    )
+                )
+                generator_tasks.append(task)
+
+            # Wait for all generators to complete
+            await asyncio.gather(*generator_tasks)
+
+            if request.error is None:
+                request.state = TaskState.COMPLETED
+
+        except TimeoutError as e:
+            request.error = e
+            request.state = TaskState.FAILED
+            self.logger.error(f"Request {request.id} timed out after {time.time() - request.start_time:.2f}s")
         except Exception as e:
-            task.error = e
-            task.phase = TaskPhase.FAILED
-            self.logger.error(f"First phase failed for task {task.id}: {e}")
-            task.output_ready_event.set()
+            request.error = e
+            request.state = TaskState.FAILED
+            self.logger.error(f"Request {request.id} failed: {e}")
+        finally:
+            request.completion_event.set()
 
-    async def execute_second_phase(
+    async def _process_generator(
             self,
-            task: GeneratorPhasedTask,
-            second_phase_fn: Callable[[Any], AsyncGenerator]
-    ) -> None:
+            request: QueuedRequest,
+            generator_input: Any,
+            sequence_idx: int,
+    ):
+        """Process a single generator in the second phase."""
         try:
             async with self.second_phase_sem:
-                generator = second_phase_fn(task.first_phase_input)
-                async for item in generator:
-                    async with self.buffer_lock:
-                        if task.global_order not in self.output_buffer[task.request_id]:
-                            self.output_buffer[task.request_id][task.global_order] = []
-                        self.output_buffer[task.request_id][task.global_order].append(item)
+                self.logger.debug(f"Starting to process sub-request {request.id}_{sequence_idx}")
 
-                task.phase = TaskPhase.COMPLETED
+                generator = request.second_fn(generator_input)
+
+                # Creiamo un Event per segnalare quando questo generatore ha finito
+                if 'generator_events' not in request.__dict__:
+                    request.generator_events = {}
+                request.generator_events[sequence_idx] = asyncio.Event()
+
+                while True:
+                    try:
+                        item = await asyncio.wait_for(
+                            generator.__anext__(),
+                            timeout=self.generator_timeout
+                        )
+                        # Aggiungiamo l'item al buffer con un event per segnalare la sua disponibilità
+                        request.sequence_buffers[sequence_idx].append((item, asyncio.Event()))
+                        request.sequence_buffers[sequence_idx][-1][1].set()  # Segnaliamo che l'item è pronto
+
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.TimeoutError:
+                        raise TimeoutError(f"Generator {sequence_idx} timed out after {self.generator_timeout}s")
 
         except Exception as e:
-            task.error = e
-            task.phase = TaskPhase.FAILED
+            self.logger.error(f"Generator {sequence_idx} for request {request.id} failed: {e}")
+            if request.error is None:  # Store first error encountered
+                request.error = e
         finally:
-            task.output_ready_event.set()
+            self.logger.debug(f"Finished sub-request {request.id}_{sequence_idx}")
+            request.completed_generators += 1
+            if hasattr(request, 'generator_events') and sequence_idx in request.generator_events:
+                request.generator_events[sequence_idx].set()
 
-    async def yield_ordered_outputs(self, request_id: str) -> AsyncGenerator[Any, None]:
-        current_order = 0
+    async def _yield_ordered_outputs(self, request: QueuedRequest) -> AsyncGenerator[Any, None]:
+        """Yield outputs in correct sequence order as soon as they're available."""
+        current_index = 0
+
         while True:
-            if request_id in self.output_buffer and current_order in self.output_buffer[request_id]:
-                async with self.buffer_lock:
-                    buffer = self.output_buffer[request_id][current_order]
-                    while buffer:
-                        yield buffer.pop(0)
-                    del self.output_buffer[request_id][current_order]
-                current_order += 1
-                continue
-
-            # Check if all tasks are completed
-            if not any(task.phase != TaskPhase.COMPLETED
-                      for tasks in self.tasks[request_id].values()
-                      for task in [tasks] if isinstance(tasks, GeneratorPhasedTask)):
+            # Verifichiamo se abbiamo finito SOLO se la richiesta è completata o fallita
+            if (request.state in (TaskState.COMPLETED, TaskState.FAILED) and
+                    request.completed_generators >= request.generators_count and
+                    all(len(buffer) == 0 for buffer in request.sequence_buffers.values())):
                 break
 
-            await asyncio.sleep(0.1)  # Prevent busy waiting
+            # Se c'è un errore, lo propaghiamo
+            if request.error:
+                raise request.error
+
+            # Controlliamo se ci sono items disponibili nel buffer corrente
+            if current_index in request.sequence_buffers:
+                while request.sequence_buffers[current_index]:
+                    item, event = request.sequence_buffers[current_index][0]
+                    # Aspettiamo che l'item sia effettivamente pronto
+                    await event.wait()
+                    yield item
+                    request.sequence_buffers[current_index].pop(0)
+
+                # Se abbiamo finito con questo buffer e il generatore ha finito,
+                # passiamo al prossimo indice
+                if (hasattr(request, 'generator_events') and
+                        current_index in request.generator_events and
+                        request.generator_events[current_index].is_set()):
+                    current_index += 1
+            else:
+                # Se non abbiamo ancora il buffer per questo indice, aspettiamo un po'
+                await asyncio.sleep(0.01)
 
     async def run(
             self,
-            request_id: str,
-            inputs: TTSRequest,
+            inputs: Any,
             first_phase_fn: Callable[[Any], Awaitable[Any]],
-            second_phase_fn: Callable[[Any], AsyncGenerator]
+            second_phase_fn: Callable[[Dict], AsyncGenerator[Any, None]]
     ) -> AsyncGenerator[Any, None]:
-        """
-        Run the pipeline maintaining both request and generator ordering.
+        """Add a request to the queue and yield results in order."""
+        if not self.is_running:
+            await self.start()
 
-        Args:
-            request_id: ID unico della richiesta
-            inputs: TTSRequest to process
-            first_phase_fn: Funzione per la prima fase
-            second_phase_fn: Funzione per la seconda fase
-        """
-        try:
-            if not isinstance(inputs.text, list):
-                inputs.text = [inputs.text]
-            # Initialize main tasks
-            for i, input_data in enumerate(inputs.text):
-                task = GeneratorPhasedTask(
-                    request_id=request_id,
-                    sub_task_id=0,  # Will be updated for parallel generators
-                    global_order=i,
-                    first_phase_input=input_data,
-                    phase=TaskPhase.FIRST
-                )
-                self.tasks[request_id][i] = task
-                asyncio.create_task(
-                    self.execute_first_phase(task, first_phase_fn, second_phase_fn)
-                )
+        # Split input if it's a batch
+        if isinstance(inputs.text, list):
+            text_batch = inputs.text
+        else:
+            text_batch = [inputs.text]
 
-            # Yield results in order
-            async for item in self.yield_ordered_outputs(request_id):
-                yield item
+        # Create all requests first
+        requests = []
+        for text in text_batch:
+            inputs_copy = inputs.copy()
+            inputs_copy.text = text
 
-        finally:
-            # Cleanup
-            self.tasks.pop(request_id, None)
-            self.output_buffer.pop(request_id, None)
-            self.next_to_yield.pop(request_id, None)
+            request = QueuedRequest(
+                id=uuid.uuid4().hex,
+                input=inputs_copy,
+                first_fn=first_phase_fn,
+                second_fn=second_phase_fn
+            )
+            requests.append(request)
+            self.logger.info(f"Starting request {request.id}")
+            # Add to queue immediately
+            await self.request_queue.put(request)
+
+        # Now process all requests in order
+        for request in requests:
+            try:
+                async for item in self._yield_ordered_outputs(request):
+                    yield item
+
+                # Wait for completion with timeout
+                try:
+                    await asyncio.wait_for(
+                        request.completion_event.wait(),
+                        timeout=self.request_timeout
+                    )
+                    if request.error:
+                        raise request.error
+                except asyncio.TimeoutError:
+                    raise TimeoutError(f"Request timed out waiting for completion after {self.request_timeout}s")
+
+            finally:
+                self.active_requests.pop(request.id, None)
+                self.logger.info(f"Finished request {request.id}")
+
+    async def shutdown(self):
+        """Gracefully shutdown the scheduler."""
+        self.is_running = False
+        if self.queue_processor_task:
+            self.queue_processor_task.cancel()
+            try:
+                await self.queue_processor_task
+            except asyncio.CancelledError:
+                pass
+
+        # Wait for active requests to complete
+        if self.active_requests:
+            self.logger.info(f"Waiting for {len(self.active_requests)} active requests to complete...")
+            await asyncio.gather(
+                *(request.completion_event.wait() for request in self.active_requests.values()),
+                return_exceptions=True
+            )
