@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
     name='fasterTTS',
     version='0.1.0',
-    description='This is a faster implementation for TTS models',
+    description='This is a faster implementation for TTS models, to be used in highly async environment',
     author='Marco Lironi',
     author_email='marcolironi@astramind.ai',
     url='https://github.com/astramind.ai/fasterTTS',
