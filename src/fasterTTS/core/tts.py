@@ -109,19 +109,18 @@ class TTS:
                 complete_audio.append(chunk)
             return TTSOutput.combine_outputs(complete_audio)
 
-    def generate_speech(self, requests: Union[TTSRequest, List[TTSRequest]]) -> Union[Generator[TTSOutput, None, None], TTSOutput]:
+    def generate_speech(self, request: TTSRequest) -> Union[Generator[TTSOutput, None, None], TTSOutput]:
         """Generate speech for single or multiple requests."""
-        if not isinstance(requests, list):
-            requests = [requests]
 
-        if requests[0].stream:
+
+        if request.stream:
             def sync_generator():
                 q = queue.Queue()
 
                 async def async_gen():
                     try:
                         async for chunk in self.scheduler.run(
-                            inputs=requests,
+                            inputs=request,
                             first_phase_fn=self._prepare_generation_context,
                             second_phase_fn=self._second_phase_fn
                         ):
@@ -139,7 +138,7 @@ class TTS:
                     finally:
                         q.put(None)
 
-                # Avvia la coroutine in un nuovo thread con il proprio event loop
+                # Start the coroutine
                 threading.Thread(target=run_async_gen, daemon=True).start()
 
                 while True:
@@ -161,7 +160,7 @@ class TTS:
             async def generate_all():
                 complete_audio = []
                 async for chunk in self.scheduler.run(
-                        inputs=requests,
+                        inputs=request,
                         first_phase_fn=self._prepare_generation_context,
                         second_phase_fn=self._second_phase_fn
                 ):

@@ -43,7 +43,7 @@ tts = TTS()
 tts.tts_engine = XTTSv2Engine.from_pretrained("AstraMindAI/xtts2", torch_dtype=torch.float32)
 
 @pytest.mark.asyncio
-async def test_tts_async_generation():
+async def test_tts_async_multiple_concurrent_generation():
     # Crea le richieste TTS
     request1 = TTSRequest(
         text=text,

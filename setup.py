@@ -7,7 +7,8 @@ setup(
     author='Marco Lironi',
     author_email='marcolironi@astramind.ai',
     url='https://github.com/astramind.ai/fasterTTS',
-    packages=find_packages(exclude=['tests', 'docs']),
+    package_dir={'': 'src'},
+    packages=find_packages(where='src'),
     install_requires=[
         'asyncio',
         'torch>=1.8.0',

@@ -14,7 +14,7 @@ import torchaudio
 
 @dataclass
 class TTSOutput:
-    """Container for XTTS inference output with integrated audio utilities"""
+    """Container for TTS inference output with integrated audio utilities"""
     wav: np.ndarray
     sample_rate: int = 24000
 

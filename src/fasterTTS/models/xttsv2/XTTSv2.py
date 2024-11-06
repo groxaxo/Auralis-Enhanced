@@ -32,9 +32,9 @@ from .config.xttsv2_gpt_config import XTTSGPTConfig
 
 from .components.vllm.hidden_state_collector import HiddenStatesCollector
 from .components.vllm.hijack import ExtendedSamplingParams, LogitsRepetitionPenalizer
-from .components._tts.layers.xtts.hifigan_decoder import HifiDecoder
-from .components._tts.layers.xtts.latent_encoder import ConditioningEncoder
-from .components._tts.layers.xtts.perceiver_encoder import PerceiverResampler
+from .components.tts.layers.xtts.hifigan_decoder import HifiDecoder
+from .components.tts.layers.xtts.latent_encoder import ConditioningEncoder
+from .components.tts.layers.xtts.perceiver_encoder import PerceiverResampler
 
 
 class XTTSv2Engine(BaseAsyncTTSEngine):
@@ -599,7 +599,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                             hidden_states,
                             g=speaker_embeddings
                         ).cpu().numpy().squeeze()
-                    )
+                    )  # noqa
 
                     # Yield il risultato direttamente
                     yield TTSOutput(wav=wav)

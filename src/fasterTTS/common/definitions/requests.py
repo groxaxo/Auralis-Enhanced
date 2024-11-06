@@ -5,7 +5,7 @@ from typing import Union, AsyncGenerator, Optional, List
 
 @dataclass
 class TTSRequest:
-    """Container for XTTS inference request data"""
+    """Container for TTS inference request data"""
     # Request metadata
     text: Union[AsyncGenerator[str, None], str, List[str]]
     language: str

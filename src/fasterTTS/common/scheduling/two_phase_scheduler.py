@@ -12,7 +12,6 @@ from src.fasterTTS.common.definitions.scheduler import QueuedRequest, TaskState
 from src.fasterTTS.models.base import AudioOutputGenerator
 
 
-
 class TwoPhaseScheduler:
     def __init__(
             self,
@@ -20,7 +19,7 @@ class TwoPhaseScheduler:
             request_timeout: float = 300.0,
             generator_timeout: float = 30.0
     ):
-        self.logger = setup_logger(__file__, logging.DEBUG)
+        self.logger = setup_logger(__file__)
         self.second_phase_concurrency = second_phase_concurrency
         self.request_timeout = request_timeout
         self.generator_timeout = generator_timeout
@@ -124,7 +123,7 @@ class TwoPhaseScheduler:
 
                 generator = request.second_fn(generator_input)
 
-                # Creiamo un Event per segnalare quando questo generatore ha finito
+                # Create a signal to emit the end of generation
                 if 'generator_events' not in request.__dict__:
                     request.generator_events = {}
                 request.generator_events[sequence_idx] = asyncio.Event()

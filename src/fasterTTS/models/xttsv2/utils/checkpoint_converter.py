@@ -5,7 +5,7 @@ import os
 
 def convert_checkpoint(pytorch_checkpoint_path, output_dir):
     """
-    Convert PyTorch checkpoint to SafeTensors format, mapping weights to GPT2 or XTTS models
+    Convert PyTorch checkpoint to SafeTensors format, mapping weights to GPT2 or XTTSv2 models
     based on specific substrings.
 
     Args:

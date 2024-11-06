@@ -20,11 +20,9 @@ from tokenizers import Tokenizer
 from tokenizers.pre_tokenizers import WhitespaceSplit
 from tokenizers.processors import TemplateProcessing
 
-from ..components._tts.layers.xtts.zh_num2words import TextNorm as zh_num2words
+from ..components.tts.layers.xtts.zh_num2words import TextNorm as zh_num2words
 
 import cutlet
-
-# Funzioni di preprocessing del testo
 
 def get_spacy_lang(lang):
     if lang == "zh":
@@ -546,6 +544,7 @@ _ordinal_re = {
     "ko": re.compile(r"([0-9]+)(번째|번|차|째)"),
 }
 _number_re = re.compile(r"[0-9]+")
+# noinspection Annotator
 _currency_re = {
     "USD": re.compile(r"((\$[0-9\.\,]*[0-9]+)|([0-9\.\,]*[0-9]+\$))"),
     "GBP": re.compile(r"((£[0-9\.\,]*[0-9]+)|([0-9\.\,]*[0-9]+£))"),
