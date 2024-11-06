@@ -8,6 +8,8 @@ import time
 from collections import defaultdict
 
 from FasterTTS import setup_logger
+from fasterTTS.common.requests import TTSRequest
+from fasterTTS.models.base_tts_engine import AudioOutputGenerator
 
 T = TypeVar('T')
 R = TypeVar('R')
@@ -215,57 +217,45 @@ class GeneratorTwoPhaseScheduler:
 
     async def run(
             self,
-            inputs: Any,
+            inputs: TTSRequest,
             first_phase_fn: Callable[[Any], Awaitable[Any]],
-            second_phase_fn: Callable[[Dict], AsyncGenerator[Any, None]]
+            second_phase_fn: Callable[[Dict], AudioOutputGenerator]
     ) -> AsyncGenerator[Any, None]:
         """Add a request to the queue and yield results in order."""
         if not self.is_running:
             await self.start()
 
         # Split input if it's a batch
-        if isinstance(inputs.text, list):
-            text_batch = inputs.text
-        else:
-            text_batch = [inputs.text]
+        assert not isinstance(inputs.text, list), "Batch processing not supported in async mode"
 
-        # Create all requests first
-        requests = []
-        for text in text_batch:
-            inputs_copy = inputs.copy()
-            inputs_copy.text = text
-
-            request = QueuedRequest(
+        request = QueuedRequest(
                 id=uuid.uuid4().hex,
-                input=inputs_copy,
+                input=inputs,
                 first_fn=first_phase_fn,
                 second_fn=second_phase_fn
-            )
-            requests.append(request)
-            self.logger.info(f"Starting request {request.id}")
-            # Add to queue immediately
-            await self.request_queue.put(request)
+        )
+        self.logger.info(f"Starting request {request.id}")
+        # Add to queue immediately
+        await self.request_queue.put(request)
 
-        # Now process all requests in order
-        for request in requests:
+        try:
+            async for item in self._yield_ordered_outputs(request):
+                yield item
+
+            # Wait for completion with timeout
             try:
-                async for item in self._yield_ordered_outputs(request):
-                    yield item
+                await asyncio.wait_for(
+                    request.completion_event.wait(),
+                    timeout=self.request_timeout
+                )
+                if request.error:
+                    raise request.error
+            except asyncio.TimeoutError:
+                raise TimeoutError(f"Request timed out waiting for completion after {self.request_timeout}s")
 
-                # Wait for completion with timeout
-                try:
-                    await asyncio.wait_for(
-                        request.completion_event.wait(),
-                        timeout=self.request_timeout
-                    )
-                    if request.error:
-                        raise request.error
-                except asyncio.TimeoutError:
-                    raise TimeoutError(f"Request timed out waiting for completion after {self.request_timeout}s")
-
-            finally:
-                self.active_requests.pop(request.id, None)
-                self.logger.info(f"Finished request {request.id}")
+        finally:
+            self.active_requests.pop(request.id, None)
+            self.logger.info(f"Finished request {request.id}")
 
     async def shutdown(self):
         """Gracefully shutdown the scheduler."""
