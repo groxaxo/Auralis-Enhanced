@@ -2,14 +2,14 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, List, AsyncGenerator, Callable, TypeVar, Awaitable
 import asyncio
-import logging
 from enum import Enum
 import time
-from collections import OrderedDict
-
+from collections import OrderedDict, defaultdict
 
 from fasterTTS.common.logger import setup_logger
 from fasterTTS.common.output import TTSOutput
+from fasterTTS.common.requests import TTSRequest
+from fasterTTS.models.base_tts_engine import AudioTokenGenerator, AudioOutputGenerator
 
 T = TypeVar('T')
 R = TypeVar('R')
@@ -24,10 +24,10 @@ class TaskPhase(Enum):
 @dataclass
 class GeneratorPhasedTask:
     """Task for two-phase generator execution."""
-    id: str
-    sequence_order: int  # New field to track original input order
+    request_id: str  # ID della richiesta originale
+    sub_task_id: int  # Indice all'interno della richiesta per gestire i generatori multipli
+    global_order: int  # Ordine globale per preservare l'ordinamento originale
     first_phase_input: Any
-    metadata: Dict[str, Any]
     phase: TaskPhase
     context: Any = None
     error: Optional[Exception] = None
@@ -49,195 +49,125 @@ class GeneratorTwoPhaseScheduler:
         self.second_phase_concurrency = second_phase_concurrency
         self.timeout = timeout
 
-        # Task tracking
-        self.pending_tasks: Dict[str, GeneratorPhasedTask] = {}
-        self.first_phase_tasks: Dict[str, GeneratorPhasedTask] = {}
-        self.second_phase_tasks: Dict[str, GeneratorPhasedTask] = {}
-        self.completed_tasks: Dict[str, GeneratorPhasedTask] = {}
-
-        # Output buffer for maintaining order
-        self.output_buffer: OrderedDict[int, List[Any]] = OrderedDict() # sia questo che quello sotto non sono async safe davver, con tante richieste si sovraporrebbero alcuyni valori.
-        self.next_sequence_to_yield = 0
-        self.output_available_event = asyncio.Event()
+        # Task tracking per request_id
+        self.tasks: Dict[str, Dict[int, GeneratorPhasedTask]] = defaultdict(dict)
+        self.output_buffer: Dict[str, OrderedDict[int, List[Any]]] = defaultdict(OrderedDict)
+        self.next_to_yield: Dict[str, int] = defaultdict(int)
 
         # Semaphore for second phase concurrency
-        self.second_phase_sem = asyncio.Semaphore(self.second_phase_concurrency)
+        self.second_phase_sem = asyncio.Semaphore(second_phase_concurrency)
+        self.buffer_lock = asyncio.Lock()
 
     async def execute_first_phase(
             self,
             task: GeneratorPhasedTask,
-            first_phase_fn: Callable[[Any, Dict[str, Any]], Awaitable[Any]],
-            second_phase_fn: Callable[[Any, Dict[str, Any]], AsyncGenerator]
+            first_phase_fn: Callable[[TTSRequest], Awaitable[Any]],
+            second_phase_fn: Callable[[AudioTokenGenerator], AudioOutputGenerator]
     ) -> None:
         """Execute first phase to create context."""
         try:
-            self.first_phase_tasks[task.id] = task
-            task.context = await first_phase_fn(task.first_phase_input, task.metadata)
+            task.context = await first_phase_fn(task.first_phase_input)
             task.phase = TaskPhase.SECOND
 
-            # Start the second phase immediately
-            asyncio.create_task(self.execute_second_phase(task, second_phase_fn, task.context['parallel_inputs']))
+            # Process parallel generators maintaining order
+            for idx, gen_input in enumerate(task.context['parallel_inputs']):
+                sub_task = GeneratorPhasedTask(
+                    request_id=task.request_id,
+                    sub_task_id=idx,
+                    global_order=task.global_order * 1000 + idx,  # Preserve ordering
+                    first_phase_input=gen_input,
+                    phase=TaskPhase.SECOND
+                )
+                self.tasks[task.request_id][sub_task.global_order] = sub_task
+                asyncio.create_task(self.execute_second_phase(sub_task, second_phase_fn))
+
         except Exception as e:
             task.error = e
             task.phase = TaskPhase.FAILED
             self.logger.error(f"First phase failed for task {task.id}: {e}")
             task.output_ready_event.set()
-        finally:
-            self.first_phase_tasks.pop(task.id, None)
-
-    async def process_parallel_generator(
-            self,
-            generator: AsyncGenerator,
-            context: Any,
-            sequence_order: int,
-            metadata: Dict[str, Any]
-    ):
-        """Process a single generator in the second phase."""
-        try:
-            async with self.second_phase_sem:
-                async for item in generator:
-                    self.output_buffer[sequence_order].append(item)
-                    self.output_available_event.set()
-        except Exception as e:
-            raise e
 
     async def execute_second_phase(
             self,
             task: GeneratorPhasedTask,
-            second_phase_fn: Callable[[Any, Dict[str, Any]], AsyncGenerator],
-            parallel_inputs: List[Any]
+            second_phase_fn: Callable[[Any], AsyncGenerator]
     ) -> None:
-        """Execute second phase with parallel processing of generators."""
         try:
-            self.second_phase_tasks[task.id] = task
-            self.logger.info(f"Starting second phase for task {task.id}")
+            async with self.second_phase_sem:
+                generator = second_phase_fn(task.first_phase_input)
+                async for item in generator:
+                    async with self.buffer_lock:
+                        if task.global_order not in self.output_buffer[task.request_id]:
+                            self.output_buffer[task.request_id][task.global_order] = []
+                        self.output_buffer[task.request_id][task.global_order].append(item)
 
-            # Create tasks for parallel processing
-            generator_tasks = []
-            for idx, gen_input in enumerate(parallel_inputs):
-                # Initialize buffer for this task's sequence
-                self.output_buffer[idx] = []
-                if task.context and 'request_ids' in task.context:
-                    self.logger.info(f"Consuming generator for request id: {task.context['request_ids'][idx]}")
-                generator = second_phase_fn(gen_input, task.metadata)
-                generator_task = asyncio.create_task(
-                    self.process_parallel_generator(
-                        generator=generator,
-                        context=task.context,
-                        sequence_order=idx,
-                        metadata=task.metadata
-                    )
-                )
-                generator_tasks.append(generator_task)
-
-            # Wait for all generators to complete
-            await asyncio.gather(*generator_tasks)
-            task.phase = TaskPhase.COMPLETED
-            execution_time = time.time() - task.start_time
-            self.logger.info(
-                f"Audio generation completed successfully for task {task.id}. "
-                f"Execution time: {execution_time:.2f}s"
-            )
+                task.phase = TaskPhase.COMPLETED
 
         except Exception as e:
             task.error = e
             task.phase = TaskPhase.FAILED
-            execution_time = time.time() - task.start_time
-            self.logger.error(
-                f"Second phase failed for task {task.id} after {execution_time:.2f}s. "
-                f"Error: {str(e)}"
-            )
         finally:
-            self.second_phase_tasks.pop(task.id, None)
-            self.completed_tasks[task.id] = task
             task.output_ready_event.set()
 
-            # Log final status
-            status = "completed successfully" if task.phase == TaskPhase.COMPLETED else f"failed with error: {task.error}"
-            total_time = time.time() - task.start_time
-            self.logger.debug(
-                f"Task {task.id} {status}. "
-                f"Total execution time: {total_time:.2f}s"
-            )
-
-            # If task failed, set output buffer to signal completion
-            if task.phase == TaskPhase.FAILED:
-                self.output_buffer[task.sequence_order] = [TTSOutput(error=str(task.error))]
-                self.output_available_event.set()
-
-
-    async def yield_ordered_outputs(self) -> AsyncGenerator[Any, None]:
-        """Yield outputs in correct sequence order as they become available."""
+    async def yield_ordered_outputs(self, request_id: str) -> AsyncGenerator[Any, None]:
+        current_order = 0
         while True:
-            if self.next_sequence_to_yield in self.output_buffer and len(self.output_buffer[self.next_sequence_to_yield]) > 0:
-                buffer = self.output_buffer[self.next_sequence_to_yield]
+            if request_id in self.output_buffer and current_order in self.output_buffer[request_id]:
+                async with self.buffer_lock:
+                    buffer = self.output_buffer[request_id][current_order]
+                    while buffer:
+                        yield buffer.pop(0)
+                    del self.output_buffer[request_id][current_order]
+                current_order += 1
+                continue
 
-                while buffer:  # Process all available items for current sequence
-                    item = buffer.pop(0)
-                    yield item
+            # Check if all tasks are completed
+            if not any(task.phase != TaskPhase.COMPLETED
+                      for tasks in self.tasks[request_id].values()
+                      for task in [tasks] if isinstance(tasks, GeneratorPhasedTask)):
+                break
 
-                # Remove the empty buffer entry and advance sequence
-                self.output_buffer.pop(self.next_sequence_to_yield)
-                self.next_sequence_to_yield += 1
-            else:
-                # Check if the next_sequence_to_yield has failed
-                failed_tasks = [
-                    t for t in self.completed_tasks.values()
-                    if t.sequence_order == self.next_sequence_to_yield and t.phase == TaskPhase.FAILED
-                ]
-                if failed_tasks:
-                    task = failed_tasks[0]
-
-                    self.logger.error(f"Task {task.id} failed: {task.error}")
-                    yield TTSOutput(error=str(task.error))
-                    self.output_buffer.pop(self.next_sequence_to_yield, None)
-                    self.next_sequence_to_yield += 1
-                    continue
-
-                # Check if all tasks are completed
-                if not self.output_buffer and not self.pending_tasks and not self.first_phase_tasks and not self.second_phase_tasks:
-                    break
-
-                # Wait for more output to become available
-                self.output_available_event.clear()
-                try:
-                    await asyncio.wait_for(self.output_available_event.wait(), timeout=self.timeout)
-                except asyncio.TimeoutError:
-                    self.logger.warning("Timeout waiting for output_available_event.")
-                    break
+            await asyncio.sleep(0.1)  # Prevent busy waiting
 
     async def run(
             self,
-            inputs: List[Any],
-            metadata_list: List[Dict[str, Any]],
-            first_phase_fn: Callable[[Any, Dict[str, Any]], Awaitable[Any]],
-            second_phase_fn: Callable[[Any, Dict[str, Any]], AsyncGenerator],
+            request_id: str,
+            inputs: TTSRequest,
+            first_phase_fn: Callable[[Any], Awaitable[Any]],
+            second_phase_fn: Callable[[Any], AsyncGenerator]
     ) -> AsyncGenerator[Any, None]:
         """
-        Run the pipeline with true parallel processing while maintaining output order.
+        Run the pipeline maintaining both request and generator ordering.
+
+        Args:
+            request_id: ID unico della richiesta
+            inputs: TTSRequest to process
+            first_phase_fn: Funzione per la prima fase
+            second_phase_fn: Funzione per la seconda fase
         """
-        # Initialize all tasks with sequence order
-        for i, (input_data, metadata) in enumerate(zip(inputs, metadata_list)):
-            task = GeneratorPhasedTask(
-                id=uuid.uuid4().hex,
-                sequence_order=i,
-                first_phase_input=input_data,
-                metadata=metadata,
-                phase=TaskPhase.FIRST
-            )
-            self.pending_tasks[task.id] = task
-            asyncio.create_task(
-                self.execute_first_phase(task, first_phase_fn, second_phase_fn)
-            )
+        try:
+            if not isinstance(inputs.text, list):
+                inputs.text = [inputs.text]
+            # Initialize main tasks
+            for i, input_data in enumerate(inputs.text):
+                task = GeneratorPhasedTask(
+                    request_id=request_id,
+                    sub_task_id=0,  # Will be updated for parallel generators
+                    global_order=i,
+                    first_phase_input=input_data,
+                    phase=TaskPhase.FIRST
+                )
+                self.tasks[request_id][i] = task
+                asyncio.create_task(
+                    self.execute_first_phase(task, first_phase_fn, second_phase_fn)
+                )
 
-        # Start output consumer
-        async for item in self.yield_ordered_outputs():
-            yield item
+            # Yield results in order
+            async for item in self.yield_ordered_outputs(request_id):
+                yield item
 
-        # Wait for all tasks to complete and check for errors
-        await asyncio.gather(*[t.output_ready_event.wait() for t in self.pending_tasks.values()])
-
-        # Check for any errors after all tasks complete
-        failed_tasks = [t for t in self.pending_tasks.values() if t.phase == TaskPhase.FAILED]
-        if failed_tasks:
-            raise failed_tasks[0].error  # Raise the first error encountered
+        finally:
+            # Cleanup
+            self.tasks.pop(request_id, None)
+            self.output_buffer.pop(request_id, None)
+            self.next_to_yield.pop(request_id, None)

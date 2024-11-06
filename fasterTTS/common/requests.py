@@ -7,7 +7,7 @@ from typing import Union, AsyncGenerator, Optional, List
 class TTSRequest:
     """Container for XTTS inference request data"""
     # Request metadata
-    text: Union[AsyncGenerator[str, None], str]
+    text: Union[AsyncGenerator[str, None], str, List[str]]
     language: str
     speaker_files: List[str]  # Path to the speaker audio file
     request_id: str = uuid.uuid4().hex
