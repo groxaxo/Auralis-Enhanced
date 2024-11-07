@@ -1,16 +1,12 @@
 import uuid
-
 from typing import Any, Dict, AsyncGenerator, Callable, Awaitable
 import asyncio
 import logging
-
 import time
-
-from FasterTTS import setup_logger
-from src.fasterTTS.common.definitions.requests import TTSRequest
-from src.fasterTTS.common.definitions.scheduler import QueuedRequest, TaskState
-from src.fasterTTS.models.base import AudioOutputGenerator
 from contextlib import asynccontextmanager
+
+from src.fasterTTS.common.definitions.scheduler import QueuedRequest, TaskState
+from src.fasterTTS.common.logging.logger import setup_logger
 
 
 class TwoPhaseScheduler:
@@ -25,19 +21,19 @@ class TwoPhaseScheduler:
         self.request_timeout = request_timeout
         self.generator_timeout = generator_timeout
 
-        # Queues and state tracking
         self.request_queue: asyncio.Queue[QueuedRequest] = None
         self.active_requests: Dict[str, QueuedRequest] = {}
         self.second_phase_sem = None
 
+        # Track active generator count
+        self.active_generator_count = 0
+        self.generator_count_lock = asyncio.Lock()
+
         self.is_running = False
         self.queue_processor_task = None
-
-        # Add cleanup lock to prevent race conditions during shutdown
         self.cleanup_lock = asyncio.Lock()
 
     async def start(self):
-        """Initialize async components and start the queue processor."""
         if self.is_running:
             return
 
@@ -45,27 +41,22 @@ class TwoPhaseScheduler:
         self.request_queue = asyncio.Queue()
         self.second_phase_sem = asyncio.Semaphore(self.second_phase_concurrency)
         self.is_running = True
-        self.queue_processor_task = asyncio.create_task(self._process_queue())
 
-    @asynccontextmanager
-    async def request_lifecycle(self, request_id: str):
-        """Context manager to handle request lifecycle and cleanup."""
-        try:
-            yield
-        finally:
-            async with self.cleanup_lock:
-                self.active_requests.pop(request_id, None)
-                self.logger.info(f"Cleaned up request {request_id}")
+        # Start multiple request processors to maintain concurrency
+        self.queue_processor_tasks = [
+            asyncio.create_task(self._process_queue())
+            for _ in range(self.second_phase_concurrency)
+        ]
 
     async def _process_queue(self):
-        """Main queue processor that handles incoming requests."""
+        """Process requests from the queue, maintaining high concurrency."""
         while self.is_running:
             try:
                 request = await self.request_queue.get()
                 if request.state != TaskState.QUEUED:
                     continue
 
-                async with self.request_lifecycle(request.id):
+                async with self._request_lifecycle(request.id):
                     self.active_requests[request.id] = request
                     await self._process_request(request)
 
@@ -74,6 +65,17 @@ class TwoPhaseScheduler:
             except Exception as e:
                 self.logger.error(f"Error in queue processor: {e}")
                 await asyncio.sleep(1)
+
+    @asynccontextmanager
+    async def _request_lifecycle(self, request_id: str):
+        """Context manager to handle request lifecycle and cleanup."""
+        try:
+            yield
+        finally:
+            async with self.cleanup_lock:
+                self.active_requests.pop(request_id, None)
+                self.logger.info(f"Cleaned up request {request_id}")
+
 
     async def _process_request(self, request: QueuedRequest):
         """Process a single request through both phases."""
@@ -94,7 +96,7 @@ class TwoPhaseScheduler:
             # Start second phase processing
             request.state = TaskState.PROCESSING_SECOND
 
-            # Create tasks with proper exception handling
+            # Process generators concurrently but with controlled concurrency
             generator_tasks = []
             for sequence_idx, gen_input in enumerate(parallel_inputs):
                 task = asyncio.create_task(
@@ -109,7 +111,6 @@ class TwoPhaseScheduler:
                     timeout=self.request_timeout
                 )
             except asyncio.TimeoutError:
-                # Cancel any remaining tasks
                 for task in generator_tasks:
                     if not task.done():
                         task.cancel()
@@ -131,10 +132,14 @@ class TwoPhaseScheduler:
             generator_input: Any,
             sequence_idx: int,
     ):
-        """Process a single generator in the second phase with proper resource cleanup."""
-        try:
-            async with self.second_phase_sem:
-                self.logger.debug(f"Starting to process sub-request {request.id}_{sequence_idx}")
+        """Process a single generator with semaphore control."""
+        async with self.second_phase_sem:
+            try:
+                async with self.generator_count_lock:
+                    self.active_generator_count += 1
+                    current_count = self.active_generator_count
+
+                self.logger.debug(f"Active generators: {current_count}/{self.second_phase_concurrency}")
 
                 # Initialize generator events if not exists
                 if not hasattr(request, 'generator_events'):
@@ -151,24 +156,30 @@ class TwoPhaseScheduler:
                             timeout=self.generator_timeout
                         )
                         event = asyncio.Event()
-                        event.set()  # Set immediately to prevent hanging
+                        event.set()
                         buffer.append((item, event))
                     except StopAsyncIteration:
                         break
                     except asyncio.TimeoutError:
-                        raise TimeoutError(f"Generator {sequence_idx} timed out after {self.generator_timeout}s")
+                        raise TimeoutError(f"Generator {sequence_idx} timed out")
 
-        except asyncio.CancelledError:
-            self.logger.warning(f"Generator {sequence_idx} for request {request.id} was cancelled")
-            raise
-        except Exception as e:
-            self.logger.error(f"Generator {sequence_idx} for request {request.id} failed: {e}")
-            if request.error is None:
-                request.error = e
-        finally:
-            request.completed_generators += 1
-            if sequence_idx in request.generator_events:
-                request.generator_events[sequence_idx].set()
+            except asyncio.CancelledError:
+                self.logger.warning(f"Generator {sequence_idx} for request {request.id} was cancelled")
+                raise
+            except Exception as e:
+                self.logger.error(f"Generator {sequence_idx} for request {request.id} failed: {e}")
+                if request.error is None:
+                    request.error = e
+            finally:
+                async with self.generator_count_lock:
+                    self.active_generator_count -= 1
+                    current_count = self.active_generator_count
+
+                self.logger.debug(
+                    f"Active generators after completion: {current_count}/{self.second_phase_concurrency}")
+                request.completed_generators += 1
+                if sequence_idx in request.generator_events:
+                    request.generator_events[sequence_idx].set()
 
     async def _yield_ordered_outputs(self, request: QueuedRequest) -> AsyncGenerator[Any, None]:
         """Yield outputs in correct sequence order with timeout protection."""
@@ -218,7 +229,6 @@ class TwoPhaseScheduler:
             first_phase_fn: Callable[[Any], Awaitable[Any]],
             second_phase_fn: Callable[[Dict], AsyncGenerator]
     ) -> AsyncGenerator[Any, None]:
-        """Run a request through the scheduler with proper error handling."""
         if not self.is_running:
             await self.start()
 
@@ -230,47 +240,35 @@ class TwoPhaseScheduler:
         )
 
         self.logger.info(f"Starting request {request.id}")
-        # Add to queue immediately
         await self.request_queue.put(request)
 
         try:
             async for item in self._yield_ordered_outputs(request):
                 yield item
 
-            # Wait for completion with timeout
-            try:
-                await asyncio.wait_for(
-                    request.completion_event.wait(),
-                    timeout=self.request_timeout
-                )
-                if request.error:
-                    raise request.error
-            except asyncio.TimeoutError:
-                raise TimeoutError(f"Request timed out after {self.request_timeout}s")
+            await asyncio.wait_for(
+                request.completion_event.wait(),
+                timeout=self.request_timeout
+            )
+            if request.error:
+                raise request.error
 
-        except Exception as e:
-            self.logger.error(f"Error processing request {request.id}: {e}")
-            raise
         finally:
             async with self.cleanup_lock:
                 self.active_requests.pop(request.id, None)
 
     async def shutdown(self):
-        """Gracefully shutdown the scheduler with timeout."""
         self.is_running = False
 
-        if self.queue_processor_task:
-            self.queue_processor_task.cancel()
-            try:
-                await asyncio.wait_for(self.queue_processor_task, timeout=5.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
+        # Cancel all processor tasks
+        for task in self.queue_processor_tasks:
+            if task and not task.done():
+                task.cancel()
 
-        # Cancel all active requests
-        active_requests = list(self.active_requests.values())
-        if active_requests:
-            self.logger.info(f"Cancelling {len(active_requests)} active requests...")
+        await asyncio.gather(*self.queue_processor_tasks, return_exceptions=True)
+
+        if self.active_requests:
             await asyncio.gather(
-                *(request.completion_event.wait() for request in active_requests),
+                *(request.completion_event.wait() for request in self.active_requests.values()),
                 return_exceptions=True
             )

@@ -498,7 +498,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 if hidden_states is None:
                     attempts += 1
                     if attempts < max_retries:
-                        self.logger.warning(
+                        self.logger.warning( # Forced to do so since sometimes the hidden states are not collected,
+                            #maybe because it is in a separate process the vllm process?
                             f"No hidden states collected for request {request_id} (attempt {attempts}/{max_retries}). "
                             f"Retrying after {retry_delay}s..."
                         )
