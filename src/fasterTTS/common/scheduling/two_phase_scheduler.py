@@ -10,6 +10,7 @@ from FasterTTS import setup_logger
 from src.fasterTTS.common.definitions.requests import TTSRequest
 from src.fasterTTS.common.definitions.scheduler import QueuedRequest, TaskState
 from src.fasterTTS.models.base import AudioOutputGenerator
+from contextlib import asynccontextmanager
 
 
 class TwoPhaseScheduler:
@@ -32,17 +33,29 @@ class TwoPhaseScheduler:
         self.is_running = False
         self.queue_processor_task = None
 
+        # Add cleanup lock to prevent race conditions during shutdown
+        self.cleanup_lock = asyncio.Lock()
+
     async def start(self):
         """Initialize async components and start the queue processor."""
         if self.is_running:
             return
 
         self.logger.debug("Starting the scheduler...")
-
         self.request_queue = asyncio.Queue()
         self.second_phase_sem = asyncio.Semaphore(self.second_phase_concurrency)
         self.is_running = True
         self.queue_processor_task = asyncio.create_task(self._process_queue())
+
+    @asynccontextmanager
+    async def request_lifecycle(self, request_id: str):
+        """Context manager to handle request lifecycle and cleanup."""
+        try:
+            yield
+        finally:
+            async with self.cleanup_lock:
+                self.active_requests.pop(request_id, None)
+                self.logger.info(f"Cleaned up request {request_id}")
 
     async def _process_queue(self):
         """Main queue processor that handles incoming requests."""
@@ -52,21 +65,20 @@ class TwoPhaseScheduler:
                 if request.state != TaskState.QUEUED:
                     continue
 
-                # Start processing the request
-                self.active_requests[request.id] = request
-                asyncio.create_task(self._process_request(request))
+                async with self.request_lifecycle(request.id):
+                    self.active_requests[request.id] = request
+                    await self._process_request(request)
 
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 self.logger.error(f"Error in queue processor: {e}")
-                await asyncio.sleep(1)  # Prevent tight loop on persistent errors
+                await asyncio.sleep(1)
 
-    async def _process_request(
-            self,
-            request: QueuedRequest,
-    ):
+    async def _process_request(self, request: QueuedRequest):
         """Process a single request through both phases."""
         try:
-            # First phase processing
+            # First phase processing with timeout
             request.state = TaskState.PROCESSING_FIRST
             try:
                 request.first_phase_result = await asyncio.wait_for(
@@ -76,33 +88,36 @@ class TwoPhaseScheduler:
             except asyncio.TimeoutError:
                 raise TimeoutError(f"First phase timed out after {self.request_timeout}s")
 
-            # Extract parallel inputs
             parallel_inputs = request.first_phase_result.get('parallel_inputs', [])
             request.generators_count = len(parallel_inputs)
 
             # Start second phase processing
             request.state = TaskState.PROCESSING_SECOND
+
+            # Create tasks with proper exception handling
             generator_tasks = []
             for sequence_idx, gen_input in enumerate(parallel_inputs):
                 task = asyncio.create_task(
-                    self._process_generator(
-                        request=request,
-                        generator_input=gen_input,
-                        sequence_idx=sequence_idx,
-                    )
+                    self._process_generator(request, gen_input, sequence_idx)
                 )
                 generator_tasks.append(task)
 
-            # Wait for all generators to complete
-            await asyncio.gather(*generator_tasks)
+            # Wait for all generators with timeout
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*generator_tasks, return_exceptions=True),
+                    timeout=self.request_timeout
+                )
+            except asyncio.TimeoutError:
+                # Cancel any remaining tasks
+                for task in generator_tasks:
+                    if not task.done():
+                        task.cancel()
+                raise TimeoutError(f"Second phase timed out after {self.request_timeout}s")
 
             if request.error is None:
                 request.state = TaskState.COMPLETED
 
-        except TimeoutError as e:
-            request.error = e
-            request.state = TaskState.FAILED
-            self.logger.error(f"Request {request.id} timed out after {time.time() - request.start_time:.2f}s")
         except Exception as e:
             request.error = e
             request.state = TaskState.FAILED
@@ -116,17 +131,18 @@ class TwoPhaseScheduler:
             generator_input: Any,
             sequence_idx: int,
     ):
-        """Process a single generator in the second phase."""
+        """Process a single generator in the second phase with proper resource cleanup."""
         try:
             async with self.second_phase_sem:
                 self.logger.debug(f"Starting to process sub-request {request.id}_{sequence_idx}")
 
-                generator = request.second_fn(generator_input)
-
-                # Create a signal to emit the end of generation
-                if 'generator_events' not in request.__dict__:
+                # Initialize generator events if not exists
+                if not hasattr(request, 'generator_events'):
                     request.generator_events = {}
                 request.generator_events[sequence_idx] = asyncio.Event()
+
+                generator = request.second_fn(generator_input)
+                buffer = request.sequence_buffers[sequence_idx]
 
                 while True:
                     try:
@@ -134,78 +150,85 @@ class TwoPhaseScheduler:
                             generator.__anext__(),
                             timeout=self.generator_timeout
                         )
-                        # Aggiungiamo l'item al buffer con un event per segnalare la sua disponibilità
-                        request.sequence_buffers[sequence_idx].append((item, asyncio.Event()))
-                        request.sequence_buffers[sequence_idx][-1][1].set()  # Segnaliamo che l'item è pronto
-
+                        event = asyncio.Event()
+                        event.set()  # Set immediately to prevent hanging
+                        buffer.append((item, event))
                     except StopAsyncIteration:
                         break
                     except asyncio.TimeoutError:
                         raise TimeoutError(f"Generator {sequence_idx} timed out after {self.generator_timeout}s")
 
+        except asyncio.CancelledError:
+            self.logger.warning(f"Generator {sequence_idx} for request {request.id} was cancelled")
+            raise
         except Exception as e:
             self.logger.error(f"Generator {sequence_idx} for request {request.id} failed: {e}")
-            if request.error is None:  # Store first error encountered
+            if request.error is None:
                 request.error = e
         finally:
-            self.logger.debug(f"Finished sub-request {request.id}_{sequence_idx}")
             request.completed_generators += 1
-            if hasattr(request, 'generator_events') and sequence_idx in request.generator_events:
+            if sequence_idx in request.generator_events:
                 request.generator_events[sequence_idx].set()
 
     async def _yield_ordered_outputs(self, request: QueuedRequest) -> AsyncGenerator[Any, None]:
-        """Yield outputs in correct sequence order as soon as they're available."""
+        """Yield outputs in correct sequence order with timeout protection."""
         current_index = 0
+        last_progress_time = time.time()
 
         while True:
-            # Verifichiamo se abbiamo finito SOLO se la richiesta è completata o fallita
+            # Check for completion or timeout
             if (request.state in (TaskState.COMPLETED, TaskState.FAILED) and
                     request.completed_generators >= request.generators_count and
                     all(len(buffer) == 0 for buffer in request.sequence_buffers.values())):
                 break
 
-            # Se c'è un errore, lo propaghiamo
+            # Check for deadlock - no progress for too long
+            if time.time() - last_progress_time > self.request_timeout:
+                raise TimeoutError("No progress in output generation")
+
             if request.error:
                 raise request.error
 
-            # Controlliamo se ci sono items disponibili nel buffer corrente
             if current_index in request.sequence_buffers:
-                while request.sequence_buffers[current_index]:
-                    item, event = request.sequence_buffers[current_index][0]
-                    # Aspettiamo che l'item sia effettivamente pronto
-                    await event.wait()
-                    yield item
-                    request.sequence_buffers[current_index].pop(0)
+                buffer = request.sequence_buffers[current_index]
 
-                # Se abbiamo finito con questo buffer e il generatore ha finito,
-                # passiamo al prossimo indice
+                while buffer:
+                    item, event = buffer[0]
+                    # Wait for item with timeout
+                    try:
+                        await asyncio.wait_for(event.wait(), timeout=self.generator_timeout)
+                    except asyncio.TimeoutError:
+                        raise TimeoutError(f"Timeout waiting for item in sequence {current_index}")
+
+                    yield item
+                    buffer.pop(0)
+                    last_progress_time = time.time()
+
+                # Move to next sequence if current is complete
                 if (hasattr(request, 'generator_events') and
                         current_index in request.generator_events and
                         request.generator_events[current_index].is_set()):
                     current_index += 1
-            else:
-                # Se non abbiamo ancora il buffer per questo indice, aspettiamo un po'
-                await asyncio.sleep(0.01)
+
+            await asyncio.sleep(0.01)  # Prevent tight loop
 
     async def run(
             self,
-            inputs: TTSRequest,
+            inputs: Any,
             first_phase_fn: Callable[[Any], Awaitable[Any]],
-            second_phase_fn: Callable[[Dict], AudioOutputGenerator]
+            second_phase_fn: Callable[[Dict], AsyncGenerator]
     ) -> AsyncGenerator[Any, None]:
-        """Add a request to the queue and yield results in order."""
+        """Run a request through the scheduler with proper error handling."""
         if not self.is_running:
             await self.start()
 
-        # Split input if it's a batch
-        assert not isinstance(inputs.text, list), "Batch processing not supported in async mode"
-
         request = QueuedRequest(
-                id=uuid.uuid4().hex,
-                input=inputs,
-                first_fn=first_phase_fn,
-                second_fn=second_phase_fn
+            id=uuid.uuid4().hex,
+            input=inputs,
+            first_fn=first_phase_fn,
+            second_fn=second_phase_fn
         )
+
         self.logger.info(f"Starting request {request.id}")
         # Add to queue immediately
         await self.request_queue.put(request)
@@ -223,26 +246,31 @@ class TwoPhaseScheduler:
                 if request.error:
                     raise request.error
             except asyncio.TimeoutError:
-                raise TimeoutError(f"Request timed out waiting for completion after {self.request_timeout}s")
+                raise TimeoutError(f"Request timed out after {self.request_timeout}s")
 
+        except Exception as e:
+            self.logger.error(f"Error processing request {request.id}: {e}")
+            raise
         finally:
-            self.active_requests.pop(request.id, None)
-            self.logger.info(f"Finished request {request.id}")
+            async with self.cleanup_lock:
+                self.active_requests.pop(request.id, None)
 
     async def shutdown(self):
-        """Gracefully shutdown the scheduler."""
+        """Gracefully shutdown the scheduler with timeout."""
         self.is_running = False
+
         if self.queue_processor_task:
             self.queue_processor_task.cancel()
             try:
-                await self.queue_processor_task
-            except asyncio.CancelledError:
+                await asyncio.wait_for(self.queue_processor_task, timeout=5.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
 
-        # Wait for active requests to complete
-        if self.active_requests:
-            self.logger.info(f"Waiting for {len(self.active_requests)} active requests to complete...")
+        # Cancel all active requests
+        active_requests = list(self.active_requests.values())
+        if active_requests:
+            self.logger.info(f"Cancelling {len(active_requests)} active requests...")
             await asyncio.gather(
-                *(request.completion_event.wait() for request in self.active_requests.values()),
+                *(request.completion_event.wait() for request in active_requests),
                 return_exceptions=True
             )

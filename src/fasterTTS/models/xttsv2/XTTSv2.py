@@ -2,6 +2,7 @@ import asyncio
 import functools
 import logging
 import uuid
+from contextlib import asynccontextmanager
 
 from pathlib import Path
 from typing import Optional, List, Tuple, Union, AsyncGenerator
@@ -43,7 +44,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
     def __init__(self,
                  hifi_config: XTTSConfig,
                  gpt_config: XTTSGPTConfig,
-                 max_gb_for_vllm_model: int = 4,
+                 max_gb_for_vllm_model: int = 2,
                  tensor_parallel_size: int = 1,
                  **kwargs):
         super().__init__()
@@ -337,6 +338,15 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
         return gpt_cond_latents, speaker_embedding
 
+    @asynccontextmanager
+    async def cuda_memory_manager(self):
+        try:
+            yield
+        finally:
+            torch.cuda.synchronize()
+            await asyncio.sleep(0.1)
+            torch.cuda.empty_cache()
+
     def get_style_emb(self, cond_input: torch.Tensor, return_latent: Optional[bool] = False) -> torch.Tensor:
         """Get conditioning embeddings from mel spectrograms."""
         if not return_latent:
@@ -592,16 +602,15 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                         }
                     )
 
-                    # Genera il segmento audio
                     wav = await asyncio.get_event_loop().run_in_executor(
                         self.executor,
                         lambda: self.hifigan_decoder.inference(
                             hidden_states,
                             g=speaker_embeddings
                         ).cpu().numpy().squeeze()
-                    )  # noqa
+                    ) # noqa
 
-                    # Yield il risultato direttamente
+                    # yield the audio output
                     yield TTSOutput(wav=wav)
 
         except Exception as e:
