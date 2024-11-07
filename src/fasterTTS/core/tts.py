@@ -1,13 +1,15 @@
 import asyncio
+import json
 import queue
 import threading
-from typing import AsyncGenerator, Optional, Dict, Union, Generator, List
+from typing import AsyncGenerator, Optional, Dict, Union, Generator
+from huggingface_hub import hf_hub_download
 
 from src.fasterTTS.common.definitions.output import TTSOutput
 from src.fasterTTS.common.definitions.requests import TTSRequest
 from src.fasterTTS.common.scheduling.two_phase_scheduler import TwoPhaseScheduler
 from src.fasterTTS.models.base import BaseAsyncTTSEngine, AudioOutputGenerator
-
+from src.fasterTTS.models.registry import MODEL_REGISTRY
 
 class TTS:
     def __init__(self):
@@ -18,9 +20,17 @@ class TTS:
         """Profile the TTS engine to be used with the scheduler."""
         pass
 
-    def from_pretrained(self, model_name_or_path: str):
+    def from_pretrained(self, model_name_or_path: str, **kwargs):
         """Load a pretrained model compatible with HF path."""
-        pass
+        try:
+            config_path = hf_hub_download(repo_id=model_name_or_path, filename='config.json')
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            self.tts_engine = MODEL_REGISTRY[config['model_type']].from_pretrained(model_name_or_path, **kwargs)
+            return self
+        except Exception as e:
+            raise ValueError(f"Could not load model from {model_name_or_path}: {e}")
+
 
     async def _prepare_generation_context(self,
                                           input_request: TTSRequest,

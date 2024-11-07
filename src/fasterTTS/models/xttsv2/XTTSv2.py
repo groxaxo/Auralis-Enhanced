@@ -2,7 +2,6 @@ import asyncio
 import functools
 import logging
 import uuid
-from multiprocessing import Manager
 
 from pathlib import Path
 from typing import Optional, List, Tuple, Union, AsyncGenerator
@@ -18,8 +17,7 @@ from vllm.multimodal import MultiModalDataDict
 from vllm.sampling_params import RequestOutputKind
 from vllm.utils import Counter
 
-from ..base import BaseAsyncTTSEngine, ConditioningConfig, AudioTokenGenerator, \
-    TokenGeneratorsAndPossiblyConditioning
+from ..base import BaseAsyncTTSEngine, ConditioningConfig, TokenGeneratorsAndPossiblyConditioning
 from ...common.logging.logger import setup_logger
 from ...common.definitions.output import TTSOutput
 from ...common.definitions.requests import TTSRequest
@@ -39,6 +37,8 @@ from .components.tts.layers.xtts.perceiver_encoder import PerceiverResampler
 
 class XTTSv2Engine(BaseAsyncTTSEngine):
     """Async XTTS model implementation using VLLM's AsyncEngine."""
+
+    model_type: "xtts"
 
     def __init__(self,
                  hifi_config: XTTSConfig,

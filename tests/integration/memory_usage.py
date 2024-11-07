@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+
 import torch
 import gc
 import asyncio
@@ -22,49 +25,18 @@ speaker_file = "/home/marco/PycharmProjects/betterVoiceCraft/female.wav"
 # Initialize the TTS engine
 tts = TTS()
 tts.tts_engine = XTTSv2Engine.from_pretrained(
-    "/home/marco/PycharmProjects/betterVoiceCraft/hf_converted_files/xtts2",
+    "AstraMindAI/xtts2",
     torch_dtype=torch.float32
 )
 
-async def main():
-    # Create TTS requests
-    request1 = TTSRequest(
+def main():
+    request_for_generator = TTSRequest(
         text=text,
         language="it",
-        speaker_files=[speaker_file],
-        stream=True
+        speaker_files=[Path(__file__).parent / '..' / 'resources' /  'audio_samples' / 'female.wav'],
+        stream=False
     )
-
-    request2 = TTSRequest(
-        text=text,
-        language="it",
-        speaker_files=[speaker_file],
-        stream=True
-    )
-
-    requests = [request1, request2]
-
-    # Define coroutines for the requests
-    coroutines = [tts.generate_speech_async(req) for req in requests]
-
-    # Execute the requests in parallel
-    results = await asyncio.gather(*coroutines, return_exceptions=True)
-
-    # Coroutine to process each result
-    async def process_result(idx, result):
-        if isinstance(result, Exception):
-            print(f"Error in request {idx}: {result}")
-        else:
-            async for chunk in result:
-                pass  # Process the audio chunk as needed
-                # Example: Save or play the chunk
-                # print(f"Received audio chunk for request {idx}: {chunk}")
-
-    # Process all results in parallel
-    await asyncio.gather(
-        *(process_result(idx, result) for idx, result in enumerate(results, 1)),
-        return_exceptions=True
-    )
+    audio = tts.generate_speech(request_for_generator)
     print("All TTS requests have been processed.")
 
 def profile_function(target_function, *args, **kwargs):
