@@ -22,14 +22,14 @@ class LogitsRepetitionPenalizer:
             raise ValueError("Repetition penalty must be non-negative")
         self.repetition_penalty = repetition_penalty
 
-    def __call__(self, token_ids: List[int], logits: torch.Tensor) -> torch.Tensor:
+    def __call__(self, prompt_token_ids:List[int], token_ids: List[int], logits: torch.Tensor) -> torch.Tensor:
         """Apply repetition penalty to the logits based on previous tokens."""
         # If no repetition penalty or no tokens to check, return original logits
-        if self.repetition_penalty == 1.0 or not token_ids:
+        if self.repetition_penalty == 1.0 or (not token_ids and not prompt_token_ids):
             return logits
 
         # Create a mask for the repeated tokens
-        repeated_tokens = torch.tensor(token_ids,
+        repeated_tokens = torch.tensor(prompt_token_ids + token_ids,
                                        device=logits.device,
                                        dtype=torch.long)
 

@@ -181,7 +181,7 @@ def input_processor_for_xtts2_gpt(ctx: InputContext, inputs: DecoderOnlyInputs):
 
     if not is_last_decoding_pass:
         # we fill everything with 0 since we don't actually needs text token ids, it would mess up in the sampling step
-        new_token_ids = [1] * (audio.shape[0] + 1) # +1 for the start audio generation token
+        new_token_ids = ([1] * (audio.shape[0])) + [ctx.model_config.hf_config.start_audio_token] # add the start audio generation token
     else:
         new_token_ids = ([1] * audio.shape[0]) + prompt_token_ids
     # the encoding had already been done externally to reuse the embeddings for later use but we
@@ -288,15 +288,11 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
     ) -> Union[torch.Tensor, "IntermediateTensors"]:
         """Forward pass following VLLM pattern."""
         # it is not the first iter either if the cond latents are emtpy or if the kv_caches are not empty
-        is_first_iteration = len(input_ids) > 1 and (input_ids==1).all()
+        is_first_iteration = len(input_ids) > 1 and torch.isin(input_ids, torch.tensor([1, 1024], device=input_ids.device)).all()
 
         #assert len(input_ids) == 1 or (cond_latents is not None and not is_first_iteration), "Conditioning data (voice conditioning+text_embeddings) is required for XTTS"
 
         is_logits_only_mode = self.check_is_logits_only_mode(is_logits_only_mode)
-
-        if is_first_iteration:
-            # we add it to enable the model to start the generation
-            input_ids[-1] = self.audio_start_generation_token
 
         hidden_states = self.gpt(
             input_ids=input_ids,
@@ -458,7 +454,7 @@ class GPT2Model(nn.Module):
             hidden_states = audio_inputs_embeds + position_embeds
 
             if isinstance(input_embeds, list) and is_logits_only_mode:
-                hidden_states = list(hidden_states.split(ids_for_unpacking, dim=0))
+                hidden_states = list(hidden_states.split(ids_for_unpacking, dim=0)) # whby this tho?
 
             if is_first_iteration or is_logits_only_mode:
                 # We concat the text and audio conditioning input in the sequence dimension

@@ -138,7 +138,7 @@ class ColoredFormatter(logging.Formatter):
 
 def setup_logger(
         name: Optional[Union[str, Path]] = None,
-        level: int = logging.INFO
+        level: int = logging.DEBUG
 ) -> logging.Logger:
     """
     Setup a colored logger with VLLM override and file location

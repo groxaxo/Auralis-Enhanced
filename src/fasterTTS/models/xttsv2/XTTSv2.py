@@ -44,7 +44,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
     def __init__(self,
                  hifi_config: XTTSConfig,
                  gpt_config: XTTSGPTConfig,
-                 max_gb_for_vllm_model: int = 2,
+                 max_gb_for_vllm_model: int = 5,
                  pipeline_parallel_size: int = 1,
                  tensor_parallel_size: int = 1,
                  **kwargs):
@@ -123,7 +123,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         # Semaphore for concurrency control of the encoding process
         self.max_concurrency = 10
         self.semaphore = asyncio.BoundedSemaphore(self.max_concurrency)
-
+        self.eval()
     @property
     def conditioning_config(self) -> ConditioningConfig:
         return ConditioningConfig(
@@ -155,10 +155,10 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             model="AstraMindAI/xtts2-gpt",
             tensor_parallel_size=self.tp,
             pipeline_parallel_size=self.pp,
-            dtype="auto",
-            max_model_len=self.gpt_config.max_text_tokens +
-                          self.gpt_config.max_audio_tokens +
-                          self.gpt_config.max_prompt_tokens + 3, # this is from the xttsv2 code
+            dtype="float32",
+             max_model_len=self.gpt_config.max_text_tokens +
+                           self.gpt_config.max_audio_tokens +
+                           self.gpt_config.max_prompt_tokens + 3, # this is from the xttsv2 code
             gpu_memory_utilization=self.get_memory_percentage(self.max_gb_for_vllm_model * 1024 ** 3),
             trust_remote_code=True,
             enforce_eager=True,
@@ -239,7 +239,6 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
         return model
 
-    @torch.inference_mode()
     def get_speaker_embedding(self, audio, sr):
 
 
@@ -250,7 +249,6 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             .to(self.device)
         )
 
-    @torch.inference_mode()
     def get_gpt_cond_latents(self, audio, sr, length: int = 30, chunk_length: int = 6):
         """Compute the conditioning latents for the GPT model from the given audio."""
         if sr != 22050:
@@ -301,7 +299,6 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             cond_latent = self.get_style_emb(mel.to(self.device))
         return cond_latent.transpose(1, 2)
 
-    @torch.inference_mode()
     def get_conditioning_latents(
             self,
             audio_path,
@@ -474,7 +471,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 request_id = uuid.uuid4().hex
 
                 # Add start and end tokens
-                token_ids = [self.mel_bos_token_id] + list(token_ids) + [self.mel_eos_token_id] * 4
+                token_ids = [self.mel_bos_token_id] + list(token_ids) + [self.mel_eos_token_id] * 5
 
                 engine_inputs = TokensPrompt(prompt_token_ids=token_ids)
                 engine_inputs["multi_modal_data"] = conditioning
@@ -522,7 +519,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                         )
 
                 # Successfully got hidden states
-                return hidden_states[-len(token_ids):-4, ...].unsqueeze(0).to(self.device).to(self.dtype)
+                return self.final_norm(hidden_states[-len(token_ids):-5, ...].unsqueeze(0).to(self.device).to(self.dtype))
 
             except Exception as e:
                 attempts += 1
@@ -537,7 +534,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                     self.logger.critical(f"Failed to get hidden states after {max_retries} attempts")
                     raise
 
-
+    @torch.inference_mode()
     async def get_generation_context(self,
                                      request: TTSRequest,
                                      ) -> TokenGeneratorsAndPossiblyConditioning:
@@ -585,7 +582,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
         return generators, requests_id, speaker_embeddings, gpt_embed_inputs
 
-
+    @torch.inference_mode()
     async def process_tokens_to_speech(
         self,
         generator: AsyncGenerator[RequestOutput, None],
@@ -620,6 +617,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                             g=speaker_embeddings
                         ).cpu().numpy().squeeze()
                     ) # noqa
+                    pass
 
                     # yield the audio output
                     yield TTSOutput(wav=wav)
