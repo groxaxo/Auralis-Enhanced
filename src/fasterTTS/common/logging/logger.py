@@ -50,7 +50,7 @@ class VLLMLogOverrider:
 
                 # Only show performance metrics
                 if self.perf_pattern.search(msg):
-                    self.target_logger.info(f"VLLM Performance: {msg}")
+                    self.target_logger.info(f"Decoder performance: {msg}")
                 # Silently drop all other VLLM logs
 
         return RedirectHandler(self.target_logger, self.perf_pattern)
@@ -111,10 +111,10 @@ class ColoredFormatter(logging.Formatter):
 
         if is_vllm_msg:
             # Special VLLM formatting
-            components.append(
-                f"{Fore.BLUE}{timestamp}{Style.RESET_ALL} | "
-                f"{Fore.MAGENTA}VLLM{Style.RESET_ALL} | "
-                f"{scheme['color']}{record.msg.replace('VLLM: ', '')}{Style.RESET_ALL}"
+            components.append( f"{Fore.BLUE}{timestamp}{Style.RESET_ALL}"
+                f"{Fore.WHITE}{Style.DIM}{file_location}{Style.RESET_ALL}"
+                f"{scheme['color']}{scheme['style']}{scheme['icon']} {record.levelname:8}{Style.RESET_ALL}"
+                f"{scheme['color']}{record.msg}{Style.RESET_ALL}"
             )
         else:
             # Normal log formatting

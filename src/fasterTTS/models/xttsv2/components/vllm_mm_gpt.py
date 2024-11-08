@@ -28,7 +28,6 @@ from vllm.sequence import IntermediateTensors, SequenceData, VLLM_TOKEN_ID_ARRAY
 from vllm.model_executor.models.interfaces import SupportsMultiModal, SupportsPP
 
 
-
 class LearnedPositionEmbeddings(nn.Module):
     def __init__(self, seq_len, model_dim, init=0.02, relative=False, supports_pp=False):
         super().__init__()
@@ -85,8 +84,7 @@ class LearnedPositionEmbeddings(nn.Module):
 
 def get_xtts_max_audio_tokens(ctx: InputContext) -> int:
     """Calculate maximum audio tokens based on text context and audio duration."""
-    # Based on GPT config and XTTSv2 settings
-    return 608
+    return 32 # the conditoning perciever output
 
 
 def dummy_seq_data_for_xtts(
@@ -96,11 +94,10 @@ def dummy_seq_data_for_xtts(
 ) -> SequenceData:
     """Create dummy sequence data for XTTS profiling."""
     # Calculate audio token space needed
-    max_audio_token_conditioning = ctx.model_config.hf_config.max_prompt_tokens # in xtts prompt = voice conditioning
     audio_placeholder = array(
         VLLM_TOKEN_ID_ARRAY_TYPE,
         [1]
-    ) * max_audio_token_conditioning
+    ) * 32 # the conditioning perceiver output
 
     # Add separator between chunks
     audio_token_ids = (audio_placeholder + array(VLLM_TOKEN_ID_ARRAY_TYPE, [1])) * audio_count
@@ -194,6 +191,7 @@ def input_processor_for_xtts2_gpt(ctx: InputContext, inputs: DecoderOnlyInputs):
                  prompt=new_prompt,
                  multi_modal_data=multi_modal_data)
 
+from vllm.model_executor.models.ultravox import UltravoxModel
 
 @MULTIMODAL_REGISTRY.register_input_mapper("audio", input_mapper_for_xtts)
 @MULTIMODAL_REGISTRY.register_max_multimodal_tokens("audio", get_xtts_max_audio_tokens)

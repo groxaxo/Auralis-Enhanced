@@ -5,20 +5,37 @@ import threading
 from typing import AsyncGenerator, Optional, Dict, Union, Generator
 from huggingface_hub import hf_hub_download
 
-from src.fasterTTS.common.definitions.output import TTSOutput
-from src.fasterTTS.common.definitions.requests import TTSRequest
-from src.fasterTTS.common.scheduling.two_phase_scheduler import TwoPhaseScheduler
-from src.fasterTTS.models.base import BaseAsyncTTSEngine, AudioOutputGenerator
-from src.fasterTTS.models.registry import MODEL_REGISTRY
+from fasterTTS.common.definitions.output import TTSOutput
+from fasterTTS.common.definitions.requests import TTSRequest
+from fasterTTS.common.scheduling.two_phase_scheduler import TwoPhaseScheduler
+from fasterTTS.models.base import BaseAsyncTTSEngine, AudioOutputGenerator
+from fasterTTS.models.registry import MODEL_REGISTRY
 
 class TTS:
-    def __init__(self):
-        self.scheduler: Optional[TwoPhaseScheduler] = TwoPhaseScheduler()
-        self.tts_engine: Optional[BaseAsyncTTSEngine] = None  # Initialize your TTS engine here
+    def __init__(self, scheduler_max_concurrency: int = 10):
 
-    def profile_tts_for_scheduler(self):
-        """Profile the TTS engine to be used with the scheduler."""
-        pass
+        self.scheduler: Optional[TwoPhaseScheduler] = TwoPhaseScheduler(scheduler_max_concurrency)
+        self.tts_engine: Optional[BaseAsyncTTSEngine] = None  # Initialize your TTS engine here
+        self.set_vllm_memmory(scheduler_max_concurrency)
+        self.max_vllm_memory: Optional[int] = None
+
+    def set_vllm_memmory(self, scheduler_max_concurrency: int):
+        """
+        Based on the expected concurrency we allocate memory for VLLM.
+        This is not intended as a permanent solution but rather as a temporary workaround.
+        """
+        # some hardcoded values for memory allocation, had been proven to work
+        match scheduler_max_concurrency:
+            case n if n <= 10:
+                self.max_vllm_memory = 2
+            case n if n <= 20:
+                self.max_vllm_memory = 2.5
+            case n if n <= 30:
+                self.max_vllm_memory = 3
+            case n if n <= 40:
+                self.max_vllm_memory = 3.5
+            case _:
+                self.max_vllm_memory = 6
 
     def from_pretrained(self, model_name_or_path: str, **kwargs):
         """Load a pretrained model compatible with HF path."""
@@ -26,6 +43,7 @@ class TTS:
             config_path = hf_hub_download(repo_id=model_name_or_path, filename='config.json')
             with open(config_path, 'r') as f:
                 config = json.load(f)
+            kwargs['max_vllm_memory'] = self.max_vllm_memory
             self.tts_engine = MODEL_REGISTRY[config['model_type']].from_pretrained(model_name_or_path, **kwargs)
             return self
         except Exception as e:

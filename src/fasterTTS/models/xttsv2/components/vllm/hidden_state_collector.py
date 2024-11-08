@@ -5,7 +5,7 @@ import torch
 from queue import Queue
 from concurrent.futures import ThreadPoolExecutor
 
-from src.fasterTTS.common.logging.logger import setup_logger
+from fasterTTS.common.logging.logger import setup_logger
 
 
 class SyncCollectorWrapper:
@@ -83,8 +83,10 @@ class HiddenStatesCollector:
             with self.locks[request_id]:
                 outputs = self.outputs.get(request_id, [])
                 if not outputs:
-                    self.logger.error(f"No hidden states found for request {request_id}")
-                    return None
+                    # most likely due to wrong profiling data dimensions
+                    self.logger.critical(f"No hidden states found for request {request_id}")
+                    raise ValueError(f"No hidden states found for request {request_id}, "
+                                     f"this should not happen, please open an issue on github")
 
                 try:
                     result = torch.cat(outputs, dim=0)

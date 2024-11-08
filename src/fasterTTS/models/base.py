@@ -7,8 +7,8 @@ import torchaudio
 from dataclasses import dataclass
 from vllm import RequestOutput
 
-from src.fasterTTS.common.definitions.output import TTSOutput
-from src.fasterTTS.common.definitions.requests import TTSRequest
+from fasterTTS.common.definitions.output import TTSOutput
+from fasterTTS.common.definitions.requests import TTSRequest
 
 Token = Union[int, List[int]]
 

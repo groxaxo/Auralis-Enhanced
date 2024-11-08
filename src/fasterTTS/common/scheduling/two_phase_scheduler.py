@@ -5,16 +5,16 @@ import logging
 import time
 from contextlib import asynccontextmanager
 
-from src.fasterTTS.common.definitions.scheduler import QueuedRequest, TaskState
-from src.fasterTTS.common.logging.logger import setup_logger
+from fasterTTS.common.definitions.scheduler import QueuedRequest, TaskState
+from fasterTTS.common.logging.logger import setup_logger
 
 
 class TwoPhaseScheduler:
     def __init__(
             self,
             second_phase_concurrency: int = 10,
-            request_timeout: float = 300.0,
-            generator_timeout: float = 30.0
+            request_timeout: float = None,
+            generator_timeout: float = None
     ):
         self.logger = setup_logger(__file__)
         self.second_phase_concurrency = second_phase_concurrency
@@ -194,7 +194,7 @@ class TwoPhaseScheduler:
                 break
 
             # Check for deadlock - no progress for too long
-            if time.time() - last_progress_time > self.request_timeout:
+            if  self.request_timeout and time.time() - last_progress_time > self.request_timeout:
                 raise TimeoutError("No progress in output generation")
 
             if request.error:

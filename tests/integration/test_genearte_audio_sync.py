@@ -4,9 +4,9 @@ import os.path
 import pytest
 import torch
 
-from src.fasterTTS.common.definitions.requests import TTSRequest
-from src.fasterTTS.models.xttsv2.XTTSv2 import XTTSv2Engine
-from src.fasterTTS.core.tts import TTS
+from fasterTTS.common.definitions.requests import TTSRequest
+from fasterTTS.models.xttsv2.XTTSv2 import XTTSv2Engine
+from fasterTTS.core.tts import TTS
 
 text = """La Storia di Villa Margherita
 

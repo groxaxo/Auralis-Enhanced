@@ -3,7 +3,7 @@ from typing import List
 import torch
 from vllm import SamplingParams
 
-from src.fasterTTS.models.xttsv2.components.vllm.hidden_state_collector import HiddenStatesCollector
+from fasterTTS.models.xttsv2.components.vllm.hidden_state_collector import HiddenStatesCollector
 
 
 class ExtendedSamplingParams(SamplingParams, kw_only=True):

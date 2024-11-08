@@ -45,6 +45,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                  hifi_config: XTTSConfig,
                  gpt_config: XTTSGPTConfig,
                  max_gb_for_vllm_model: int = 2,
+                 pipeline_parallel_size: int = 1,
                  tensor_parallel_size: int = 1,
                  **kwargs):
         super().__init__()
@@ -57,6 +58,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.mel_bos_token_id = gpt_config.start_audio_token
         self.mel_eos_token_id = gpt_config.stop_audio_token
         self.tp = tensor_parallel_size
+        self.pp = pipeline_parallel_size
         self.tokenizer = XTTSTokenizerFast.from_pretrained("AstraMindAI/xtts2-gpt")
         self.request_counter = Counter()
         self.executor = ThreadPoolExecutor(max_workers=10)  # For CPU-bound tasks
@@ -152,13 +154,20 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         engine_args = AsyncEngineArgs(
             model="AstraMindAI/xtts2-gpt",
             tensor_parallel_size=self.tp,
+            pipeline_parallel_size=self.pp,
             dtype="auto",
-            max_model_len=self.gpt_config.max_text_tokens + self.gpt_config.max_audio_tokens,
+            max_model_len=self.gpt_config.max_text_tokens +
+                          self.gpt_config.max_audio_tokens +
+                          self.gpt_config.max_prompt_tokens + 3, # this is from the xttsv2 code
             gpu_memory_utilization=self.get_memory_percentage(self.max_gb_for_vllm_model * 1024 ** 3),
             trust_remote_code=True,
             enforce_eager=True,
             limit_mm_per_prompt={"audio": 1},
-            max_num_batched_tokens=608*4,
+            max_num_seqs=8,
+            max_num_batched_tokens=((self.gpt_config.max_text_tokens +
+                                    self.gpt_config.max_audio_tokens +
+                                    self.gpt_config.max_prompt_tokens) // 32) * 32 * 8,
+            #We round to the nearest multiple of 32 and multiply by 8 to get the max batched number (arbitrary) of tokens
         )
         self.logger.info(f"Initializing VLLM engine with args: {engine_args}")
         self.llm_engine = AsyncLLMEngine.from_engine_args(engine_args)
@@ -170,7 +179,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             torch_dtype: torch.dtype = torch.float32,
             device_map: Optional[str] = "auto",
             tensor_parallel_size: int = 1,
-            max_gpu_memory_in_gb: int = 1 ,
+            pipeline_parallel_size: int = 1,
             **kwargs,
     ) -> nn.Module:
         """Load pretrained XTTS model from HuggingFace Hub."""
@@ -201,7 +210,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             hifi_config=hifi_config,
             gpt_config=gpt_config,
             tensor_parallel_size=tensor_parallel_size,
-            max_gpu_memory_in_gb=max_gpu_memory_in_gb,
+            pipeline_parallel_size=pipeline_parallel_size,
+            max_gpu_memory_in_gb=kwargs.get('max_vllm_memory', 2),
             **kwargs
         )
 
@@ -340,7 +350,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
     @asynccontextmanager
     async def cuda_memory_manager(self):
-        try:
+        try: # useless since this would de-syncronize the cuda operations
             yield
         finally:
             torch.cuda.synchronize()
@@ -357,7 +367,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             if hasattr(self, 'conditioning_perceiver'):
                 conds = self.conditioning_perceiver(
                     conds.permute(0, 2, 1)
-                ).transpose(1, 2)
+                ).transpose(1, 2) # (b,d,32)
         else:
             conds = cond_input.unsqueeze(1)
         return conds
@@ -446,7 +456,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             self,
             token_ids: List[int],
             conditioning: MultiModalDataDict,
-            max_retries: int = 3,
+            max_retries: int = 5,
             retry_delay: float = 0.1
     ) -> torch.Tensor:
         """
