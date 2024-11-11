@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 import torch
 from vllm import SamplingParams
@@ -12,7 +12,9 @@ class ExtendedSamplingParams(SamplingParams, kw_only=True):
     This class inherits from SamplingParams and allows adding new required fields
     without conflicting with the base class's optional fields ordering.
     """
-    hidden_state_collector: HiddenStatesCollector  # New required field
+    hidden_state_collector: Optional[HiddenStatesCollector] = None  # New required field
+    request_id: Optional[str] = None  # New required field
+
 
 class LogitsRepetitionPenalizer:
     """A logits processor that applies repetition penalty to prevent repetitive text generation."""

@@ -113,9 +113,10 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             cond_d_vector_in_each_upsampling_layer=self.hifi_config.cond_d_vector_in_each_upsampling_layer,
         )
 
+        self.final_norm = nn.LayerNorm(gpt_config.hidden_size, eps=1e-5, bias=True)
+
         # Kept for model loading purposes
         self.text_head = nn.Linear(gpt_config.hidden_size, gpt_config.number_text_tokens, bias=True)
-        self.final_norm = nn.LayerNorm(gpt_config.hidden_size, eps=1e-5, bias=True)
 
         # Initialize VLLM engine at the end
         self.init_vllm_engine()
@@ -471,7 +472,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 request_id = uuid.uuid4().hex
 
                 # Add start and end tokens
-                token_ids = [self.mel_bos_token_id] + list(token_ids) + [self.mel_eos_token_id] * 5
+                token_ids = [self.mel_bos_token_id] + list(token_ids) + [self.mel_eos_token_id] * 4
 
                 engine_inputs = TokensPrompt(prompt_token_ids=token_ids)
                 engine_inputs["multi_modal_data"] = conditioning
@@ -517,9 +518,9 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                             f"No hidden states collected for request {request_id} after {max_retries} attempts. "
                             f"This should never happen! Please report this issue on GitHub."
                         )
-
+                start_of_audio_hs = conditioning["audio"]["embeds"].shape[0]
                 # Successfully got hidden states
-                return self.final_norm(hidden_states[-len(token_ids):-5, ...].unsqueeze(0).to(self.device).to(self.dtype))
+                return self.final_norm(hidden_states[start_of_audio_hs:-5, ...].unsqueeze(0).to(self.device).to(self.dtype))
 
             except Exception as e:
                 attempts += 1
@@ -553,10 +554,11 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         generators = []
         requests_id = []
         for seq_index, sequence in enumerate(tokens_list):
-            sampling_params = SamplingParams(
+            sampling_params = ExtendedSamplingParams(
                 temperature=request.temperature,
                 top_p=request.top_p,
                 detokenize=False,
+                request_id=request.request_id,
                 top_k=request.top_k,
                 logits_processors=[LogitsRepetitionPenalizer(request.repetition_penalty)],
                 repetition_penalty=1.0,  # Since we're handling repetition penalty manually
@@ -612,10 +614,10 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
                     wav = await asyncio.get_event_loop().run_in_executor(
                         self.executor,
-                        lambda: self.hifigan_decoder.inference(
+                        lambda: self.hifigan_decoder(
                             hidden_states,
                             g=speaker_embeddings
-                        ).cpu().numpy().squeeze()
+                        ).cpu().detach().numpy().squeeze()
                     ) # noqa
                     pass
 

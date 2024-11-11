@@ -1,8 +1,11 @@
+import asyncio
 import functools
 import math
 import random
 import uuid
 from array import array
+from collections import defaultdict
+from dataclasses import dataclass
 
 import numpy as np
 import torch
@@ -27,6 +30,115 @@ from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalInputs
 from vllm.sequence import IntermediateTensors, SequenceData, VLLM_TOKEN_ID_ARRAY_TYPE
 from vllm.model_executor.models.interfaces import SupportsMultiModal, SupportsPP
 
+from typing import Dict, List
+from collections import defaultdict
+import asyncio
+
+PrefillLength= Union[int, List[int]]
+TokenPosition= Union[int, List[int]]
+
+@dataclass
+class TokenPositionAndPrefillTuple:
+    prefill_len: Optional[PrefillLength] = None
+    pos_id: Optional[TokenPosition] = None
+
+class PositionalEmbeddingsCorrecter:
+    """Corrects positional embeddings for XTTS model,
+    since they have a different length than the text embeddings.
+    This class tracks tokens both by request_id and position for vLLM compatibility.
+    """
+
+    def __init__(self):
+        # Maps request_id to its prefill length
+        self.request_tracker_dict: Dict[str, TokenPositionAndPrefillTuple] = defaultdict(lambda: TokenPositionAndPrefillTuple())
+        # Maps token_position pairs to their request_id
+        self.token_to_request: Dict[str, str] = {}
+
+    def init_request_id_prefill(self, request_id: str, prefill_len: PrefillLength, nex_token: torch.Tensor):
+        """Initialize a request_id with its prefill length."""
+        self.request_tracker_dict[request_id] = TokenPositionAndPrefillTuple(prefill_len, prefill_len)
+        self.token_to_request[f"{nex_token}_{prefill_len}"] = request_id
+
+    def get_by_request_id(self, request_id: str) -> TokenPositionAndPrefillTuple:
+        """Retrieve the prefill length for a given request_id."""
+        return self.request_tracker_dict.get(request_id, None)
+
+    def get_by_next_token(self, next_token_ids: List[int], next_position_ids: List[int]) -> List[TokenPositionAndPrefillTuple]:
+        """Retrieve prefill lengths for given token and position pairs.
+
+        Args:
+            next_token_ids: List of token IDs
+            next_position_ids: List of position IDs, corresponding to token IDs
+
+        Returns:
+            List of prefill lengths for each token-position pair
+
+        Raises:
+            ValueError: If no valid token mappings are found
+        """
+        prefill_lengths = []
+        for next_token_id, next_position_id in zip(next_token_ids, next_position_ids):
+            token_key = f"{next_token_id}_{next_position_id}"
+            if token_key in self.token_to_request:
+                request_id = self.token_to_request[token_key]
+                prefill_lengths.append(self.request_tracker_dict[request_id])
+
+        if not prefill_lengths:
+            raise ValueError(f"No valid mappings found for token pairs")
+        return prefill_lengths
+
+    def _invalidate_previous_mapping(self, request_id: str):
+        """Remove all token mappings associated with a given request_id.
+
+        This prevents memory leaks from old token mappings and ensures
+        we don't have stale token-to-request associations.
+        """
+        # Find all token keys that map to this request_id
+        keys_to_remove = [
+            token_key for token_key, req_id in self.token_to_request.items()
+            if req_id == request_id
+        ]
+
+        # Remove all found mappings
+        for token_key in keys_to_remove:
+            del self.token_to_request[token_key]
+
+    def _get_pos_id_and_update (self, request_id: str):
+        """Get the position ID for a given request_id and update it."""
+        tuple_prefill_token = self.get_by_request_id(request_id)
+        # Update the position ID
+        self.request_tracker_dict[request_id] = TokenPositionAndPrefillTuple(tuple_prefill_token.prefill_len, tuple_prefill_token.pos_id + 1)
+        return tuple_prefill_token.pos_id + 1
+
+
+    def associate_new_tokens(self, request_id: str, next_token_id: int):
+        """Associate a new token-position pair with a request_id.
+
+        Before creating the new association, it removes all previous
+        token mappings for this request_id to maintain consistency.
+
+        Args:
+            request_id: The request identifier
+            next_token_id: The token ID to associate
+        """
+        pos_id = self._get_pos_id_and_update(request_id)
+
+        # Clean up old mappings first
+        self._invalidate_previous_mapping(request_id)
+
+        # Create new mapping
+        self.token_to_request[f"{next_token_id}_{pos_id}"] = request_id
+
+    def clear_request(self, request_id: str):
+        """Remove all data associated with a request_id.
+
+        This includes both the prefill length tracking and any token mappings.
+        """
+        if request_id in self.request_tracker_dict:
+            # First remove all token mappings
+            self._invalidate_previous_mapping(request_id)
+            # Then remove the request tracking
+            del self.request_tracker_dict[request_id]
 
 class LearnedPositionEmbeddings(nn.Module):
     def __init__(self, seq_len, model_dim, init=0.02, relative=False, supports_pp=False):
@@ -65,7 +177,7 @@ class LearnedPositionEmbeddings(nn.Module):
             >>> pos_emb = LearnedPositionEmbeddings(100, 64)
             >>> # Batched input
             >>> batch_indices = torch.zeros((3, 5))  # batch_size=3, seq_len=5
-            >>> embeddings = pos_emb.get_fixed_embedding(batch_indices, 'cuda')
+            >>> embeddings = pos_emb.get_fixed_embedding(batch_indices, torch.device('cuda'))
             >>> embeddings.shape  # Returns: [3, 5, 64]
         """
         if ind.shape[0] > 1:
@@ -155,8 +267,7 @@ def input_mapper_for_xtts(ctx: InputContext, data: Union[Dict, List[Tensor]]) ->
             raise NotImplementedError(f"Unsupported data type: {type(audio_input)}")
 
     return MultiModalInputs({"cond_latents": embeds,
-                             "is_logits_only_mode": is_logits_only_mode,
-                             })
+                             "is_logits_only_mode": is_logits_only_mode})
 
 
 def input_processor_for_xtts2_gpt(ctx: InputContext, inputs: DecoderOnlyInputs):
@@ -198,9 +309,9 @@ from vllm.model_executor.models.ultravox import UltravoxModel
 @INPUT_REGISTRY.register_dummy_data(dummy_data_for_xtts)
 @INPUT_REGISTRY.register_input_processor(input_processor_for_xtts2_gpt)
 class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
-    def __init__(
+    def __init__( # type: ignore
             self,
-            config: PretrainedConfig,
+            config: GPT2Config,
             multimodal_config: MultiModalConfig,
             cache_config: Optional[CacheConfig] = None,
             quant_config: Optional[QuantizationConfig] = None,
@@ -209,6 +320,7 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
         self.config = config
         self.quant_config = quant_config
 
+        self.prefix_sequence_dict: Dict[str, torch.Tensor] = {}
         # Core GPT components
         self.gpt = GPT2Model(
             config,
@@ -233,6 +345,8 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
                                                 config.num_audio_tokens,
                                                 logit_scale)
         self.sampler = Sampler()
+
+        self.positional_embeddings_correcter = PositionalEmbeddingsCorrecter()
 
     @staticmethod
     def check_is_logits_only_mode(is_logits_only_mode):
@@ -275,7 +389,7 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
         return indices
 
     # noinspection PyMethodOverriding
-    def forward(
+    def forward( # type: ignore
             self,
             input_ids: torch.Tensor,
             positions: torch.Tensor,
@@ -290,10 +404,11 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
         # it is not the first iter either if the cond latents are emtpy or if the kv_caches are not empty
         is_first_iteration = len(input_ids) > 1 and torch.isin(input_ids, torch.tensor([1, 1024], device=input_ids.device)).all()
 
-        #assert len(input_ids) == 1 or (cond_latents is not None and not is_first_iteration), "Conditioning data (voice conditioning+text_embeddings) is required for XTTS"
-
         is_logits_only_mode = self.check_is_logits_only_mode(is_logits_only_mode)
 
+        if not is_first_iteration and not is_logits_only_mode:
+            correct_positions_ids = self.positional_embeddings_correcter.get_by_next_token(input_ids.tolist(), positions.tolist()) # TODO is batched working
+            positions = 1 + positions - torch.tensor([correct_positions_id.prefill_len for correct_positions_id in correct_positions_ids], device=positions.device)
         hidden_states = self.gpt(
             input_ids=input_ids,
             position_ids=positions,
@@ -314,14 +429,16 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
             sampling_metadata: SamplingMetadata,
     ) -> Optional[torch.Tensor]:
 
-        # normalize the hidden states
-        hidden_states = self.final_norm(hidden_states)
-
         # Check if we need to collect hidden states
         sampling_params = sampling_metadata.seq_groups[0].sampling_params
-        if hasattr(sampling_params, 'hidden_state_collector'):
+        if (hasattr(sampling_params, 'hidden_state_collector')
+                and sampling_params.hidden_state_collector is not None):
+
             # Call the collector directly with the hidden states
             sampling_params.hidden_state_collector(hidden_states, None)  # The request_id is already bound
+
+        # normalize the hidden states
+        hidden_states = self.final_norm(hidden_states)
 
         # Compute logits using the mel_head
         logits = self.logits_processor(self.mel_head, hidden_states, sampling_metadata)
@@ -333,6 +450,20 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
             sampling_metadata: SamplingMetadata,
     ) -> Optional[SamplerOutput]:
         next_tokens = self.sampler(logits, sampling_metadata)
+        for idx, seq_groups in enumerate(sampling_metadata.seq_groups):
+            if hasattr(seq_groups.sampling_params, 'request_id') and seq_groups.sampling_params.request_id is not None:
+                # Call the collector directly with the next tokens
+                if not self.positional_embeddings_correcter.get_by_request_id(seq_groups.sampling_params.request_id):
+                    self.positional_embeddings_correcter.init_request_id_prefill(
+                        request_id = seq_groups.sampling_params.request_id,
+                        prefill_len=len(seq_groups.seq_data[idx].prompt_token_ids),
+                        nex_token=next_tokens.outputs[0].samples[idx].output_token
+                    )
+                else:
+                    self.positional_embeddings_correcter.associate_new_tokens(
+                        request_id=seq_groups.sampling_params.request_id,
+                        next_token_id=next_tokens.outputs[0].samples[idx].output_token)
+
         return next_tokens
 
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
@@ -439,22 +570,23 @@ class GPT2Model(nn.Module):
                     ], dim= -1).squeeze(0)
                 else:
                     input_ids = input_ids[input_embeds.shape[1]:].reshape(1, -1)
-                    position_ids = position_ids[input_embeds.shape[1]:]#.reshape(1, -1)
+                    position_ids = position_ids[input_embeds.shape[1]:]
             else:
                 input_ids = input_ids
 
             audio_inputs_embeds = self.wte(input_ids).squeeze(0)
 
-            # weird but they to it like this in the xtts2 model
+
             position_embeds = self.wpe.get_fixed_embedding(
-                    position_ids, input_ids.device
+                    position_ids, input_ids.device #ERROR! position_ids mustge the
             ) if not is_first_iteration \
-                    else self.wpe(audio_inputs_embeds.reshape(-1, 1)) # we need to reshape to 2D tensor or useless?
+                    else self.wpe(audio_inputs_embeds.reshape(-1, 1)) # weird but they to it like this in the xtts2 model
+            # we need to reshape to 2D tensor or useless?
 
             hidden_states = audio_inputs_embeds + position_embeds
 
             if isinstance(input_embeds, list) and is_logits_only_mode:
-                hidden_states = list(hidden_states.split(ids_for_unpacking, dim=0)) # whby this tho?
+                hidden_states = list(hidden_states.split(ids_for_unpacking, dim=0)) # THis is
 
             if is_first_iteration or is_logits_only_mode:
                 # We concat the text and audio conditioning input in the sequence dimension
@@ -491,6 +623,7 @@ class GPT2Model(nn.Module):
             hidden_states = layer(hidden_states,
                                   kv_caches[i - self.start_layer],
                                   attn_metadata)
+            # pass (used to debug the hidden states)
 
         if not get_pp_group().is_last_rank:
             return IntermediateTensors({"hidden_states": hidden_states})
