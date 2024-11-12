@@ -81,14 +81,16 @@ class TTS:
                 'multimodal_data': gpt_like_decoder_conditioning[i] if
                                    gpt_like_decoder_conditioning is not None and isinstance(gpt_like_decoder_conditioning, list) else
                                    gpt_like_decoder_conditioning if gpt_like_decoder_conditioning is not None else
-                                   None
+                                   None,
+                'request_id': requests_ids[i],
+
             }
             for i, gen in enumerate(audio_token_generators)
         ]
 
         return {
             'parallel_inputs': parallel_inputs,
-            'request_ids': requests_ids,
+            #'request_ids': requests_ids,
             'request': input_request
         }
 
@@ -98,7 +100,8 @@ class TTS:
             async for chunk in self.tts_engine.process_tokens_to_speech( # type: ignore
                     generator=gen_input['generator'],
                     speaker_embeddings=gen_input['speaker_embedding'],
-                    multimodal_data=gen_input['multimodal_data']
+                    multimodal_data=gen_input['multimodal_data'],
+                    request_id=gen_input['request_id'],
             ):
                 yield chunk
         except Exception as e:

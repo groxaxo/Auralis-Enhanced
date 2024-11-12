@@ -156,7 +156,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             model="AstraMindAI/xtts2-gpt",
             tensor_parallel_size=self.tp,
             pipeline_parallel_size=self.pp,
-            dtype="float32",
+            dtype="auto",
              max_model_len=self.gpt_config.max_text_tokens +
                            self.gpt_config.max_audio_tokens +
                            self.gpt_config.max_prompt_tokens + 3, # this is from the xttsv2 code
@@ -454,6 +454,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             self,
             token_ids: List[int],
             conditioning: MultiModalDataDict,
+            request_id: str,
             max_retries: int = 5,
             retry_delay: float = 0.1
     ) -> torch.Tensor:
@@ -463,13 +464,14 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         Args:
             token_ids: Input token IDs
             conditioning: Conditioning data
+            request_id: Unique request ID
             max_retries: Maximum number of retry attempts
             retry_delay: Delay between retries in seconds
         """
         attempts = 0
         while attempts < max_retries:
             try:
-                request_id = uuid.uuid4().hex
+                request_id = f"{request_id}_logits"
 
                 # Add start and end tokens
                 token_ids = [self.mel_bos_token_id] + list(token_ids) + [self.mel_eos_token_id] * 4
@@ -484,6 +486,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 # Set up sampling parameters with the bound collector
                 sampling_params = ExtendedSamplingParams(
                     detokenize=False,
+                    request_id=request_id,
                     max_tokens=1,
                     hidden_state_collector=bound_collector,
                     output_kind=RequestOutputKind.FINAL_ONLY
@@ -558,7 +561,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 temperature=request.temperature,
                 top_p=request.top_p,
                 detokenize=False,
-                request_id=request.request_id,
+                request_id=uuid.uuid4(),
                 top_k=request.top_k,
                 logits_processors=[LogitsRepetitionPenalizer(request.repetition_penalty)],
                 repetition_penalty=1.0,  # Since we're handling repetition penalty manually
@@ -590,6 +593,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         generator: AsyncGenerator[RequestOutput, None],
         speaker_embeddings: Optional[torch.Tensor] = None,
         multimodal_data: Optional[torch.Tensor] = None,
+        request_id: Optional[str] = None,
     ) -> AsyncGenerator[TTSOutput, None]:
         """
         Process a single token generator and emit results.
@@ -608,8 +612,9 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                             "audio": {
                                 'embeds': multimodal_data,  # Use multimodal data for conditioning
                                 "is_logits_only_mode": True
-                            }
-                        }
+                            },
+                        },
+                        request_id
                     )
 
                     wav = await asyncio.get_event_loop().run_in_executor(

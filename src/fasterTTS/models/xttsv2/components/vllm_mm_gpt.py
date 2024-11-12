@@ -433,12 +433,13 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
         sampling_params = sampling_metadata.seq_groups[0].sampling_params
         if (hasattr(sampling_params, 'hidden_state_collector')
                 and sampling_params.hidden_state_collector is not None):
-
+            #sampling_params.request_id.startswith() # TODO ADD A METHOD FOR GWENERAL DELETION based on request id root
+            self.positional_embeddings_correcter.clear_request(sampling_params.request_id)
             # Call the collector directly with the hidden states
             sampling_params.hidden_state_collector(hidden_states, None)  # The request_id is already bound
 
         # normalize the hidden states
-        hidden_states = self.final_norm(hidden_states)
+        hidden_states = self.final_norm(hidden_states) # TODO this here or before the state collection?
 
         # Compute logits using the mel_head
         logits = self.logits_processor(self.mel_head, hidden_states, sampling_metadata)
@@ -450,19 +451,20 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
             sampling_metadata: SamplingMetadata,
     ) -> Optional[SamplerOutput]:
         next_tokens = self.sampler(logits, sampling_metadata)
-        for idx, seq_groups in enumerate(sampling_metadata.seq_groups):
+        for seq_id, seq_groups in enumerate(sampling_metadata.seq_groups):
             if hasattr(seq_groups.sampling_params, 'request_id') and seq_groups.sampling_params.request_id is not None:
+                idx = seq_groups.seq_ids[0]
                 # Call the collector directly with the next tokens
                 if not self.positional_embeddings_correcter.get_by_request_id(seq_groups.sampling_params.request_id):
                     self.positional_embeddings_correcter.init_request_id_prefill(
                         request_id = seq_groups.sampling_params.request_id,
                         prefill_len=len(seq_groups.seq_data[idx].prompt_token_ids),
-                        nex_token=next_tokens.outputs[0].samples[idx].output_token
+                        nex_token=next_tokens.outputs[seq_id].samples[0].output_token # index out of error
                     )
                 else:
                     self.positional_embeddings_correcter.associate_new_tokens(
                         request_id=seq_groups.sampling_params.request_id,
-                        next_token_id=next_tokens.outputs[0].samples[idx].output_token)
+                        next_token_id=next_tokens.outputs[seq_id].samples[0].output_token)
 
         return next_tokens
 
