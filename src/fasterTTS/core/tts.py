@@ -2,7 +2,7 @@ import asyncio
 import json
 import queue
 import threading
-from typing import AsyncGenerator, Optional, Dict, Union, Generator
+from typing import AsyncGenerator, Optional, Dict, Union, Generator, List
 from huggingface_hub import hf_hub_download
 
 from fasterTTS.common.definitions.output import TTSOutput
@@ -11,11 +11,14 @@ from fasterTTS.common.scheduling.two_phase_scheduler import TwoPhaseScheduler
 from fasterTTS.models.base import BaseAsyncTTSEngine, AudioOutputGenerator
 from fasterTTS.models.registry import MODEL_REGISTRY
 
+from src.cuda_tracer import cuda_trace
+
+
 class TTS:
     def __init__(self, scheduler_max_concurrency: int = 10):
-
         self.scheduler: Optional[TwoPhaseScheduler] = TwoPhaseScheduler(scheduler_max_concurrency)
         self.tts_engine: Optional[BaseAsyncTTSEngine] = None  # Initialize your TTS engine here
+        self.concurrency = scheduler_max_concurrency
         self.set_vllm_memmory(scheduler_max_concurrency)
         self.max_vllm_memory: Optional[int] = None
 
@@ -44,6 +47,7 @@ class TTS:
             with open(config_path, 'r') as f:
                 config = json.load(f)
             kwargs['max_vllm_memory'] = self.max_vllm_memory
+            kwargs['max_concurrency'] = self.concurrency
             self.tts_engine = MODEL_REGISTRY[config['model_type']].from_pretrained(model_name_or_path, **kwargs)
             return self
         except Exception as e:
@@ -90,7 +94,6 @@ class TTS:
 
         return {
             'parallel_inputs': parallel_inputs,
-            #'request_ids': requests_ids,
             'request': input_request
         }
 
@@ -141,8 +144,26 @@ class TTS:
             return TTSOutput.combine_outputs(complete_audio)
 
     def generate_speech(self, request: TTSRequest) -> Union[Generator[TTSOutput, None, None], TTSOutput]:
-        """Generate speech for single or multiple requests."""
+        """Generate speech for single or multiple requests, handling long texts by splitting."""
 
+        def split_requests(request: TTSRequest, max_length: int = 100000) -> List[TTSRequest]:
+            """Split a single request into multiple requests with shorter text chunks."""
+            if len(request.text) <= max_length:
+                return [request]
+
+            text_chunks = [request.text[i:i + max_length]
+                           for i in range(0, len(request.text), max_length)]
+
+            return [
+                TTSRequest(
+                    text=chunk,
+                    language=request.language,
+                    speaker_files=request.speaker_files,
+                    stream=request.stream
+                ) for chunk in text_chunks
+            ]
+
+        requests = split_requests(request)
 
         if request.stream:
             def sync_generator():
@@ -150,26 +171,29 @@ class TTS:
 
                 async def async_gen():
                     try:
-                        async for chunk in self.scheduler.run(
-                            inputs=request,
-                            first_phase_fn=self._prepare_generation_context,
-                            second_phase_fn=self._second_phase_fn
-                        ):
-                            q.put(chunk)
-                    except Exception as e:
-                        q.put(e)
-                    finally:
-                        q.put(None)  # Sentinel to indicate completion
-
-                def run_async_gen():
-                    try:
-                        asyncio.run(async_gen())
+                        for sub_request in requests:
+                            async for chunk in self.scheduler.run(
+                                    inputs=sub_request,
+                                    first_phase_fn=self._prepare_generation_context,
+                                    second_phase_fn=self._second_phase_fn
+                            ):
+                                q.put(chunk)
                     except Exception as e:
                         q.put(e)
                     finally:
                         q.put(None)
 
-                # Start the coroutine
+                def run_async_gen():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        loop.run_until_complete(async_gen())
+                    except Exception as e:
+                        q.put(e)
+                    finally:
+                        q.put(None)
+                        loop.close()
+
                 threading.Thread(target=run_async_gen, daemon=True).start()
 
                 while True:
@@ -182,20 +206,50 @@ class TTS:
 
             return sync_generator()
         else:
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
-            async def generate_all():
+            async def async_combine_chunks():
                 complete_audio = []
-                async for chunk in self.scheduler.run(
-                        inputs=request,
-                        first_phase_fn=self._prepare_generation_context,
-                        second_phase_fn=self._second_phase_fn
-                ):
-                    complete_audio.append(chunk)
+                for sub_request in requests:
+                    async for chunk in self.scheduler.run(
+                            inputs=sub_request,
+                            first_phase_fn=self._prepare_generation_context,
+                            second_phase_fn=self._second_phase_fn
+                    ):
+                        complete_audio.append(chunk)
                 return TTSOutput.combine_outputs(complete_audio)
 
-            return loop.run_until_complete(generate_all())
+            # Check if we're already in an event loop
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # If we're already in a running event loop, create a new one in a separate thread
+                    q = queue.Queue()
+
+                    def run_in_thread():
+                        new_loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(new_loop)
+                        try:
+                            result = new_loop.run_until_complete(async_combine_chunks())
+                            q.put(result)
+                        except Exception as e:
+                            q.put(e)
+                        finally:
+                            new_loop.close()
+
+                    thread = threading.Thread(target=run_in_thread)
+                    thread.start()
+                    thread.join()
+
+                    result = q.get()
+                    if isinstance(result, Exception):
+                        raise result
+                    return result
+                else:
+                    return loop.run_until_complete(async_combine_chunks())
+            except RuntimeError:
+                # No event loop exists yet
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    return loop.run_until_complete(async_combine_chunks())
+                finally:
+                    loop.close()

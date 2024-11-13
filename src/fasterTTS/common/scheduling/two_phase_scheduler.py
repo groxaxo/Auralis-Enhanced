@@ -1,11 +1,9 @@
 import uuid
 from typing import Any, Dict, AsyncGenerator, Callable, Awaitable
 import asyncio
-import logging
 import time
 from contextlib import asynccontextmanager
 
-from torch.fx.passes.pass_manager import logger
 
 from fasterTTS.common.definitions.scheduler import QueuedRequest, TaskState
 from fasterTTS.common.logging.logger import setup_logger
@@ -18,7 +16,7 @@ class TwoPhaseScheduler:
             request_timeout: float = None,
             generator_timeout: float = None
     ):
-        self.logger = setup_logger(__file__, logging.DEBUG)
+        self.logger = setup_logger(__file__)
         self.second_phase_concurrency = second_phase_concurrency
         self.request_timeout = request_timeout
         self.generator_timeout = generator_timeout

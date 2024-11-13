@@ -106,39 +106,28 @@ class ColoredFormatter(logging.Formatter):
         # Build components
         components = []
 
-        # Check if VLLM message
-        is_vllm_msg = "VLLM" in str(record.msg)
+        # log formatting
+        components.extend([
+            f"{Fore.BLUE}{timestamp}{Style.RESET_ALL}",
+            f"{Fore.WHITE}{Style.DIM}{file_location}{Style.RESET_ALL}",
+            f"{scheme['color']}{scheme['style']}{scheme['icon']} {record.levelname:8}{Style.RESET_ALL}",
+            f"{scheme['color']}{record.msg}{Style.RESET_ALL}"
+        ])
 
-        if is_vllm_msg:
-            # Special VLLM formatting
-            components.append( f"{Fore.BLUE}{timestamp}{Style.RESET_ALL}"
-                f"{Fore.WHITE}{Style.DIM}{file_location}{Style.RESET_ALL}"
-                f"{scheme['color']}{scheme['style']}{scheme['icon']} {record.levelname:8}{Style.RESET_ALL}"
-                f"{scheme['color']}{record.msg}{Style.RESET_ALL}"
+        # Add exception info
+        if record.exc_info:
+            components.append(
+                f"\n{Fore.RED}{Style.BRIGHT}"
+                f"{''.join(traceback.format_exception(*record.exc_info))}"
+                f"{Style.RESET_ALL}"
             )
-        else:
-            # Normal log formatting
-            components.extend([
-                f"{Fore.BLUE}{timestamp}{Style.RESET_ALL}",
-                f"{Fore.WHITE}{Style.DIM}{file_location}{Style.RESET_ALL}",
-                f"{scheme['color']}{scheme['style']}{scheme['icon']} {record.levelname:8}{Style.RESET_ALL}",
-                f"{scheme['color']}{record.msg}{Style.RESET_ALL}"
-            ])
-
-            # Add exception info
-            if record.exc_info:
-                components.append(
-                    f"\n{Fore.RED}{Style.BRIGHT}"
-                    f"{''.join(traceback.format_exception(*record.exc_info))}"
-                    f"{Style.RESET_ALL}"
-                )
 
         return " | ".join(components)
 
 
 def setup_logger(
         name: Optional[Union[str, Path]] = None,
-        level: int = logging.DEBUG
+        level: int = logging.INFO
 ) -> logging.Logger:
     """
     Setup a colored logger with VLLM override and file location

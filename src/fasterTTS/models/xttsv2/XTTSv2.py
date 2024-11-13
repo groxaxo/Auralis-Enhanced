@@ -13,7 +13,7 @@ import torch
 import torchaudio
 from torch import nn
 
-from vllm import AsyncLLMEngine, AsyncEngineArgs, SamplingParams, TokensPrompt, RequestOutput
+from vllm import AsyncLLMEngine, AsyncEngineArgs, TokensPrompt, RequestOutput
 from vllm.multimodal import MultiModalDataDict
 from vllm.sampling_params import RequestOutputKind
 from vllm.utils import Counter
@@ -118,11 +118,13 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         # Kept for model loading purposes
         self.text_head = nn.Linear(gpt_config.hidden_size, gpt_config.number_text_tokens, bias=True)
 
+        self.max_concurrency = kwargs.get('max_concurrency', 10)
+
+
         # Initialize VLLM engine at the end
-        self.init_vllm_engine()
+        self.init_vllm_engine(self.max_concurrency)
 
         # Semaphore for concurrency control of the encoding process
-        self.max_concurrency = 10
         self.semaphore = asyncio.BoundedSemaphore(self.max_concurrency)
         self.eval()
     @property
@@ -150,25 +152,26 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             args = tuple(args)
         return super().to(*args, **kwargs)
 
-    def init_vllm_engine(self):
+    def init_vllm_engine(self, concurrency):
         """Initialize models with AsyncVLLMEngine."""
+        max_seq_num = concurrency
         engine_args = AsyncEngineArgs(
             model="AstraMindAI/xtts2-gpt",
             tensor_parallel_size=self.tp,
             pipeline_parallel_size=self.pp,
             dtype="auto",
-             max_model_len=self.gpt_config.max_text_tokens +
+            max_model_len=self.gpt_config.max_text_tokens +
                            self.gpt_config.max_audio_tokens +
-                           self.gpt_config.max_prompt_tokens + 3, # this is from the xttsv2 code
+                           32 + 5 + 3, # this is from the xttsv2 code, 32 is the conditioning sql
             gpu_memory_utilization=self.get_memory_percentage(self.max_gb_for_vllm_model * 1024 ** 3),
             trust_remote_code=True,
             enforce_eager=True,
             limit_mm_per_prompt={"audio": 1},
-            max_num_seqs=8,
-            max_num_batched_tokens=((self.gpt_config.max_text_tokens +
+            max_num_seqs=max_seq_num,
+            max_num_batched_tokens=(self.gpt_config.max_text_tokens +
                                     self.gpt_config.max_audio_tokens +
-                                    self.gpt_config.max_prompt_tokens) // 32) * 32 * 8,
-            #We round to the nearest multiple of 32 and multiply by 8 to get the max batched number (arbitrary) of tokens
+                                    32 + 5 + 3) * max_seq_num,
+            #We round to the nearest multiple of 32 and multiply by max_seq_num to get the max batched number (arbitrary) of tokens
         )
         self.logger.info(f"Initializing VLLM engine with args: {engine_args}")
         self.llm_engine = AsyncLLMEngine.from_engine_args(engine_args)
@@ -241,8 +244,6 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         return model
 
     def get_speaker_embedding(self, audio, sr):
-
-
         audio_16k = torchaudio.functional.resample(audio, sr, 16000)
         return (
             self.hifigan_decoder.speaker_encoder.forward(audio_16k.to(self.device), l2_norm=True)
@@ -469,9 +470,10 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             retry_delay: Delay between retries in seconds
         """
         attempts = 0
+        base_request_id = f"{request_id}_logits"
         while attempts < max_retries:
             try:
-                request_id = f"{request_id}_logits"
+                request_id = f"{base_request_id}_{attempts}/5"
 
                 # Add start and end tokens
                 token_ids = [self.mel_bos_token_id] + list(token_ids) + [self.mel_eos_token_id] * 4

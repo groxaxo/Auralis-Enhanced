@@ -98,46 +98,21 @@ async def main():
 
     speaker_file = "/home/marco/PycharmProjects/betterVoiceCraft/female.wav"
     # Inizializza il TTS
-    tts = TTS(scheduler_max_concurrency=60).from_pretrained("AstraMindAI/xttsv2", torch_dtype=torch.float32, pipeline_parallel=3)
-    requests = []
-    for text_pieces in [text[i:i + 100000] for i in range(0, len(text), 100000)]:
-        requests.append(TTSRequest(
-            text=text_pieces,
+    tts = TTS(scheduler_max_concurrency=20).from_pretrained("AstraMindAI/xttsv2", torch_dtype=torch.float32)
+    req = TTSRequest(
+            text=text,
             language="en",
             speaker_files=[speaker_file],
             stream=False
-        ))
-    # Definisci le coroutines per le richieste
-    coroutines = [tts.generate_speech_async(req) for req in requests]
+        )
+
     start_time = time.time()
 
     # Esegui le richieste in parallelo
-    results = await asyncio.gather(*coroutines, return_exceptions=True)
+    results = tts.generate_speech(req)
 
-    output_container = {}
-
-
-     # Crea una coroutine per processare ogni risultato
-    async def process_result(idx, result):
-            output_container[idx] = []
-            if isinstance(result, Exception):
-                print(f"Si è verificato un errore nella richiesta {idx}: {result}")
-            else:
-                async for chunk in result:
-                    output_container[idx].append(chunk)
-
-
-
-    # Processa tutti i risultati in parallelo
-    await asyncio.gather(
-            *(process_result(idx, result) for idx, result in enumerate(results, 1)),
-            return_exceptions=True
-        )
     print(f"Tempo di esecuzione: {time.time() - start_time:.2f} secondi")
-    complete_list = []
-    for v in output_container.values():
-        complete_list.extend(v)
-    TTSOutput.combine_outputs(complete_list).save('harry_potar.wav')
+    results.save('harry_potar.wav')
 
 if __name__ == "__main__":
     asyncio.run(main())
