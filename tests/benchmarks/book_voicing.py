@@ -98,7 +98,7 @@ async def main():
 
     speaker_file = "/home/marco/PycharmProjects/betterVoiceCraft/female.wav"
     # Inizializza il TTS
-    tts = TTS(scheduler_max_concurrency=20).from_pretrained("AstraMindAI/xttsv2", torch_dtype=torch.float32)
+    tts = TTS(scheduler_max_concurrency=24).from_pretrained("AstraMindAI/xttsv2", torch_dtype=torch.float32)
     req = TTSRequest(
             text=text,
             language="en",

@@ -1,6 +1,5 @@
-import logging
 import threading
-from typing import Optional, Dict, List, Any, Callable
+from typing import Optional, Dict, List, Callable
 import torch
 from queue import Queue
 from concurrent.futures import ThreadPoolExecutor
@@ -83,8 +82,7 @@ class HiddenStatesCollector:
             with self.locks[request_id]:
                 outputs = self.outputs.get(request_id, [])
                 if not outputs:
-                    # most likely due to wrong profiling data dimensions
-                    self.logger.critical(f"No hidden states found for request {request_id}")
+                    self.logger.critical(f"No hidden states found for request {request_id}") # most likely due to wrong profiling data dimensions
                     raise ValueError(f"No hidden states found for request {request_id}, "
                                      f"this should not happen, please open an issue on github")
 

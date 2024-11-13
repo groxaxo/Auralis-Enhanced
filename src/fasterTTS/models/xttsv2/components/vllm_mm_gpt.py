@@ -150,14 +150,14 @@ class LearnedPositionEmbeddings(nn.Module):
             start = random.randint(sl, self.seq_len) - sl
             indices = torch.arange(start, start + sl, device=x.device)
             # Validate indices
-            #assert (indices < self.seq_len).all() and (indices >= 0).all(), \
-            #    f"Invalid position indices in forward: min={indices.min().item()}, max={indices.max().item()}, valid_range=[0,{self.seq_len-1}]"
+            assert (indices < self.seq_len).all() and (indices >= 0).all(), \
+                f"Invalid position indices in forward: min={indices.min().item()}, max={indices.max().item()}, valid_range=[0,{self.seq_len-1}]"
             return self.emb(indices)
         else:
             indices = torch.arange(0, sl, device=x.device)
             # Validate indices
-            #assert (indices < self.seq_len).all(), \
-            #    f"Sequence length {sl} exceeds maximum position embedding length {self.seq_len}"
+            assert (indices < self.seq_len).all(), \
+                f"Sequence length {sl} exceeds maximum position embedding length {self.seq_len}"
             return self.emb(indices)
 
     def get_fixed_embedding(self, ind: torch.Tensor, dev: torch.device) -> torch.Tensor:
@@ -173,10 +173,10 @@ class LearnedPositionEmbeddings(nn.Module):
             Shape: [batch_size, seq_len, model_dim] or [1, 1, model_dim]
         """
         # Validation degli indici
-        #assert (ind < self.seq_len).all(), \
-        #    f"Position indices out of range. Found max={ind.max().item()}, but maximum allowed is {self.seq_len-1}"
-        #assert (ind >= 0).all(), \
-        #    f"Negative position indices found. Min value={ind.min().item()}"
+        assert (ind < self.seq_len).all(), \
+            f"Position indices out of range. Found max={ind.max().item()}, but maximum allowed is {self.seq_len-1}"
+        assert (ind >= 0).all(), \
+            f"Negative position indices found. Min value={ind.min().item()}"
 
         if ind.shape[0] > 1:
 
@@ -403,6 +403,7 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
             correct_positions_ids = self.positional_embeddings_correcter.get_by_next_token(input_ids.tolist(), positions.tolist())
             positions = 1 + positions - torch.tensor([correct_positions_id.prefill_len for correct_positions_id in correct_positions_ids], device=positions.device)
 
+
         hidden_states = self.gpt(
             input_ids=input_ids,
             position_ids=positions,
@@ -424,17 +425,17 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
             sampling_metadata: SamplingMetadata,
     ) -> Optional[torch.Tensor]:
 
-        # Check if we need to collect hidden states
-        sampling_params = sampling_metadata.seq_groups[0].sampling_params
-        if (hasattr(sampling_params, 'hidden_state_collector')
-                and sampling_params.hidden_state_collector is not None):
-            #sampling_params.request_id.startswith() # TODO ADD A METHOD FOR GWENERAL DELETION based on request id root
-            self.positional_embeddings_correcter.clear_request(sampling_params.request_id)
-            # Call the collector directly with the hidden states
-            sampling_params.hidden_state_collector(hidden_states, None)  # The request_id is already bound
-
         # normalize the hidden states
-        hidden_states = self.final_norm(hidden_states) # TODO this here or before the state collection?
+        hidden_states = self.final_norm(hidden_states)
+
+        for seq in sampling_metadata.seq_groups:
+            # Check if we need to collect hidden states
+            sampling_params = seq.sampling_params
+            if (hasattr(sampling_params, 'hidden_state_collector')
+                    and sampling_params.hidden_state_collector is not None):
+                self.positional_embeddings_correcter.clear_request(sampling_params.request_id)
+                # Call the collector directly with the hidden states
+                sampling_params.hidden_state_collector(hidden_states, sampling_params.request_id)  # The request_id is already bound
 
         # Compute logits using the mel_head
         logits = self.logits_processor(self.mel_head, hidden_states, sampling_metadata)

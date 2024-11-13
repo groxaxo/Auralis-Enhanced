@@ -114,9 +114,12 @@ class ResBlock1(torch.nn.Module):
         for c1, c2 in zip(self.convs1, self.convs2):
             xt = F.leaky_relu(x, LRELU_SLOPE)
             xt = c1(xt)
+            xt.detach_()
             xt = F.leaky_relu(xt, LRELU_SLOPE)
             xt = c2(xt)
-            x = xt + x
+            x.add_(xt)
+            del xt
+
         return x
 
     def remove_weight_norm(self):
@@ -264,39 +267,41 @@ class HifiganGenerator(torch.nn.Module):
                 self.conds.append(nn.Conv1d(cond_channels, ch, 1))
 
     def forward(self, x, g=None):
-        """
-        Args:
-            x (Tensor): feature input tensor.
-            g (Tensor): global conditioning input tensor.
+        """Versione ottimizzata per memoria e performance"""
+        with torch.amp.autocast('cuda',enabled=True):  # Enables mixed_precision
+            o = self.conv_pre(x)
 
-        Returns:
-            Tensor: output waveform.
+            if hasattr(self, "cond_layer"):
+                o = o + self.cond_layer(g)
 
-        Shapes:
-            x: [B, C, T]
-            Tensor: [B, 1, T]
-        """
-        o = self.conv_pre(x)
-        if hasattr(self, "cond_layer"):
-            o = o + self.cond_layer(g)
-        for i in range(self.num_upsamples):
-            o = F.leaky_relu(o, LRELU_SLOPE)
-            o = self.ups[i](o)
+            for i in range(self.num_upsamples):
+                # apply in-place ReLU
+                o = F.leaky_relu(o, LRELU_SLOPE, inplace=True)
+                o = self.ups[i](o)
 
-            if self.cond_in_each_up_layer:
-                o = o + self.conds[i](g)
+                if self.cond_in_each_up_layer:
+                    o = o + self.conds[i](g)
 
-            z_sum = None
-            for j in range(self.num_kernels):
-                if z_sum is None:
-                    z_sum = self.resblocks[i * self.num_kernels + j](o)
-                else:
-                    z_sum += self.resblocks[i * self.num_kernels + j](o)
-            o = z_sum / self.num_kernels
-        o = F.leaky_relu(o)
-        o = self.conv_post(o)
-        o = torch.tanh(o)
-        return o
+                # efficient MRF block
+                for j in range(self.num_kernels):
+                    if j == 0:
+                        # Prima iterazione: inizializza z_sum
+                        z_sum = self.resblocks[i * self.num_kernels + j](o)
+                    else:
+                        # Accumula in-place per risparmiare memoria
+                        z_sum.add_(self.resblocks[i * self.num_kernels + j](o))
+
+                # divide in place
+                o = z_sum.div_(self.num_kernels)
+
+                # Forza il rilascio della memoria
+                z_sum = None
+                torch.cuda.empty_cache()
+
+            o = F.leaky_relu(o, LRELU_SLOPE, inplace=True)
+            o = self.conv_post(o)
+            o = torch.tanh(o)
+            return o
 
     @torch.no_grad()
     def inference(self, c):
@@ -684,21 +689,26 @@ class HifiDecoder(torch.nn.Module):
             x: [B, C, T]
             Tensor: [B, 1, T]
         """
-
-        z = torch.nn.functional.interpolate(
-            latents.transpose(1, 2),
-            scale_factor=[self.ar_mel_length_compression / self.output_hop_length],
-            mode="linear",
-        ).squeeze(1)
-        # upsample to the right sr
-        if self.output_sample_rate != self.input_sample_rate:
-            z = torch.nn.functional.interpolate(
-                z,
-                scale_factor=[self.output_sample_rate / self.input_sample_rate],
+        with torch.amp.autocast('cuda', enabled=True):
+            z = F.interpolate(
+                latents.transpose(1, 2),
+                scale_factor=[self.ar_mel_length_compression / self.output_hop_length],
                 mode="linear",
-            ).squeeze(0)
-        o = self.waveform_decoder(z, g=g)
-        return o
+                align_corners=False  # Faster
+            ).squeeze(1)
+
+            # upsample to the right sr
+            if self.output_sample_rate != self.input_sample_rate:
+                z = F.interpolate(
+                    z,
+                    scale_factor=[self.output_sample_rate / self.input_sample_rate],
+                    mode="linear",
+                    align_corners=False
+                ).squeeze(0)
+            del latents
+            torch.cuda.empty_cache()
+
+            return self.waveform_decoder(z, g=g)
 
     @torch.no_grad()
     def inference(self, c, g):

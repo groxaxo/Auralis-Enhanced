@@ -35,7 +35,7 @@ from .components.tts.layers.xtts.hifigan_decoder import HifiDecoder
 from .components.tts.layers.xtts.latent_encoder import ConditioningEncoder
 from .components.tts.layers.xtts.perceiver_encoder import PerceiverResampler
 
-
+@torch.compile
 class XTTSv2Engine(BaseAsyncTTSEngine):
     """Async XTTS model implementation using VLLM's AsyncEngine."""
 
@@ -44,7 +44,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
     def __init__(self,
                  hifi_config: XTTSConfig,
                  gpt_config: XTTSGPTConfig,
-                 max_gb_for_vllm_model: int = 5,
+                 max_gb_for_vllm_model: int = 2,
                  pipeline_parallel_size: int = 1,
                  tensor_parallel_size: int = 1,
                  **kwargs):
@@ -90,8 +90,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             else functools.partial(gpt_config.null_position_embeddings, dim=gpt_config.hidden_size)
         )
 
-        if gpt_config.use_perceiver_resampler:
-            self.conditioning_perceiver = PerceiverResampler(
+        self.conditioning_perceiver = PerceiverResampler(
                 dim=gpt_config.hidden_size,
                 depth=2,
                 dim_context=gpt_config.hidden_size,
@@ -101,6 +100,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 ff_mult=4,
                 use_flash_attn=False,
             )
+
+        self.conditioning_perceiver.eval()
 
         # Initialize HiFi-GAN decoder
         self.hifigan_decoder = HifiDecoder(
@@ -120,12 +121,12 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
         self.max_concurrency = kwargs.get('max_concurrency', 10)
 
-
-        # Initialize VLLM engine at the end
+        # Initialize VLLM engine at the end, settings its concurrency
         self.init_vllm_engine(self.max_concurrency)
 
         # Semaphore for concurrency control of the encoding process
-        self.semaphore = asyncio.BoundedSemaphore(self.max_concurrency)
+        self.encoder_semaphore = asyncio.BoundedSemaphore(1)#self.max_concurrency // 2)
+        self.decoder_semaphore = asyncio.BoundedSemaphore(1)#self.max_concurrency // 4)
         self.eval()
     @property
     def conditioning_config(self) -> ConditioningConfig:
@@ -215,7 +216,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             gpt_config=gpt_config,
             tensor_parallel_size=tensor_parallel_size,
             pipeline_parallel_size=pipeline_parallel_size,
-            max_gpu_memory_in_gb=kwargs.get('max_vllm_memory', 2),
+            max_gb_for_vllm_model=kwargs.get('max_vllm_memory', 2),
             **kwargs
         )
 
@@ -243,13 +244,14 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
         return model
 
-    def get_speaker_embedding(self, audio, sr):
+    async def get_speaker_embedding(self, audio, sr):
         audio_16k = torchaudio.functional.resample(audio, sr, 16000)
-        return (
-            self.hifigan_decoder.speaker_encoder.forward(audio_16k.to(self.device), l2_norm=True)
-            .unsqueeze(-1)
-            .to(self.device)
-        )
+        async with self.decoder_semaphore:
+            return (
+                self.hifigan_decoder.speaker_encoder.forward(audio_16k.to(self.device), l2_norm=True)
+                .unsqueeze(-1)
+                .to(self.device)
+            )
 
     def get_gpt_cond_latents(self, audio, sr, length: int = 30, chunk_length: int = 6):
         """Compute the conditioning latents for the GPT model from the given audio."""
@@ -301,7 +303,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             cond_latent = self.get_style_emb(mel.to(self.device))
         return cond_latent.transpose(1, 2)
 
-    def get_conditioning_latents(
+    async def get_conditioning_latents(
             self,
             audio_path,
             max_ref_length=30,
@@ -331,7 +333,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 audio = librosa.effects.trim(audio, top_db=librosa_trim_db)[0]
 
             # Compute latents for the decoder
-            speaker_embedding = self.get_speaker_embedding(audio, load_sr)
+            speaker_embedding = await self.get_speaker_embedding(audio, load_sr)
             speaker_embeddings.append(speaker_embedding)
 
             audios.append(audio)
@@ -436,28 +438,26 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             load_sr=22050,
     ):
         """Async version of get_conditioning_latents with concurrency control."""
-        async with self.semaphore:
+        async with self.encoder_semaphore:
             # Run the original get_conditioning_latents in executor
             result = await asyncio.get_event_loop().run_in_executor(
-                None,
-                functools.partial(self.get_conditioning_latents,
-                                  audio_reference,
-                                  max_ref_length,
-                                  gpt_cond_len,
-                                  gpt_cond_chunk_len,
-                                  librosa_trim_db,
-                                  sound_norm_refs,
-                                  load_sr)
-            ) # noqa
-        return result
+                self.executor,
+                self.get_conditioning_latents,
+                audio_reference,
+                max_ref_length,
+                gpt_cond_len,
+                gpt_cond_chunk_len,
+                librosa_trim_db,
+                sound_norm_refs,
+                load_sr
+            )
+            return await result
 
     async def get_model_logits(
             self,
             token_ids: List[int],
             conditioning: MultiModalDataDict,
             request_id: str,
-            max_retries: int = 5,
-            retry_delay: float = 0.1
     ) -> torch.Tensor:
         """
         Get model logits for a request with retry logic for empty hidden states.
@@ -466,79 +466,53 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             token_ids: Input token IDs
             conditioning: Conditioning data
             request_id: Unique request ID
-            max_retries: Maximum number of retry attempts
-            retry_delay: Delay between retries in seconds
         """
-        attempts = 0
-        base_request_id = f"{request_id}_logits"
-        while attempts < max_retries:
-            try:
-                request_id = f"{base_request_id}_{attempts}/5"
+        request_id = f"{request_id}_logits"
+        original_token_ids = token_ids.copy()
 
-                # Add start and end tokens
-                token_ids = [self.mel_bos_token_id] + list(token_ids) + [self.mel_eos_token_id] * 4
+        # Reset token_ids on each attempt
+        token_ids = [self.mel_bos_token_id] + list(original_token_ids) + [self.mel_eos_token_id] * 5
 
-                engine_inputs = TokensPrompt(prompt_token_ids=token_ids)
-                engine_inputs["multi_modal_data"] = conditioning
+        engine_inputs = TokensPrompt(prompt_token_ids=token_ids)
+        engine_inputs["multi_modal_data"] = conditioning
 
-                hidden_states_collector = HiddenStatesCollector()
-                # Bind the collector to this request
-                bound_collector = hidden_states_collector.bind_to_request(request_id)
+        hidden_states_collector = HiddenStatesCollector()
+        # Bind the collector to this request
+        bound_collector = hidden_states_collector.bind_to_request(request_id)
 
-                # Set up sampling parameters with the bound collector
-                sampling_params = ExtendedSamplingParams(
-                    detokenize=False,
-                    request_id=request_id,
-                    max_tokens=1,
-                    hidden_state_collector=bound_collector,
-                    output_kind=RequestOutputKind.FINAL_ONLY
+        # Set up sampling parameters with the bound collector
+        sampling_params = ExtendedSamplingParams(
+            detokenize=False,
+            request_id=request_id,
+            max_tokens=1,
+            hidden_state_collector=bound_collector,
+            output_kind=RequestOutputKind.FINAL_ONLY
+        )
+
+        # Generate with unique request ID
+        generator = self.llm_engine.generate(
+            prompt=engine_inputs,
+            sampling_params=sampling_params,
+            request_id=request_id
+        )
+
+        async for output in generator:  # consume the generator
+            if output.finished:
+                pass
+
+        # Get the collected hidden states
+        hidden_states = await hidden_states_collector.get_hidden_states(request_id)
+
+        if hidden_states is None:
+            raise RuntimeError(
+                    f"No hidden states collected for request {request_id}. "
+                    f"This should never happen! Please report this issue on GitHub."
                 )
+        start_of_audio_hs = conditioning["audio"]["embeds"].shape[0] # type: ignore
+        # Successfully got hidden states
+        return self.final_norm(hidden_states[start_of_audio_hs:-5, ...].unsqueeze(0).to(self.device).to(self.dtype))
 
-                # Generate with unique request ID
-                generator = self.llm_engine.generate(
-                    prompt=engine_inputs,
-                    sampling_params=sampling_params,
-                    request_id=request_id
-                )
 
-                async for output in generator:  # consume the generator
-                    if output.finished:
-                        pass
-
-                # Get the collected hidden states
-                hidden_states = await hidden_states_collector.get_hidden_states(request_id)
-
-                if hidden_states is None:
-                    attempts += 1
-                    if attempts < max_retries:
-                        self.logger.warning( # Forced to do so since sometimes the hidden states are not collected,
-                            #maybe because it is in a separate process the vllm process?
-                            f"No hidden states collected for request {request_id} (attempt {attempts}/{max_retries}). "
-                            f"Retrying after {retry_delay}s..."
-                        )
-                        await asyncio.sleep(retry_delay)
-                        continue
-                    else:
-                        raise RuntimeError(
-                            f"No hidden states collected for request {request_id} after {max_retries} attempts. "
-                            f"This should never happen! Please report this issue on GitHub."
-                        )
-                start_of_audio_hs = conditioning["audio"]["embeds"].shape[0]
-                # Successfully got hidden states
-                return self.final_norm(hidden_states[start_of_audio_hs:-5, ...].unsqueeze(0).to(self.device).to(self.dtype))
-
-            except Exception as e:
-                attempts += 1
-                if attempts < max_retries:
-                    self.logger.warning(
-                        f"Error getting hidden states (attempt {attempts}/{max_retries}): {str(e)}. "
-                        f"Retrying after {retry_delay}s..."
-                    )
-                    await asyncio.sleep(retry_delay)
-                    continue
-                else:
-                    self.logger.critical(f"Failed to get hidden states after {max_retries} attempts")
-                    raise
 
     @torch.inference_mode()
     async def get_generation_context(self,
@@ -619,14 +593,15 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                         request_id
                     )
 
-                    wav = await asyncio.get_event_loop().run_in_executor(
-                        self.executor,
-                        lambda: self.hifigan_decoder(
-                            hidden_states,
-                            g=speaker_embeddings
-                        ).cpu().detach().numpy().squeeze()
-                    ) # noqa
-                    pass
+                    async with self.decoder_semaphore:
+                        async with self.cuda_memory_manager():
+                            wav = await asyncio.get_event_loop().run_in_executor(
+                                self.executor,
+                                lambda: self.hifigan_decoder(
+                                    hidden_states,
+                                    g=speaker_embeddings
+                                ).cpu().detach().numpy().squeeze()
+                            ) # noqa
 
                     # yield the audio output
                     yield TTSOutput(wav=wav)

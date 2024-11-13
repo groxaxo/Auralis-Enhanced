@@ -11,16 +11,14 @@ from fasterTTS.common.scheduling.two_phase_scheduler import TwoPhaseScheduler
 from fasterTTS.models.base import BaseAsyncTTSEngine, AudioOutputGenerator
 from fasterTTS.models.registry import MODEL_REGISTRY
 
-from src.cuda_tracer import cuda_trace
-
 
 class TTS:
     def __init__(self, scheduler_max_concurrency: int = 10):
         self.scheduler: Optional[TwoPhaseScheduler] = TwoPhaseScheduler(scheduler_max_concurrency)
         self.tts_engine: Optional[BaseAsyncTTSEngine] = None  # Initialize your TTS engine here
         self.concurrency = scheduler_max_concurrency
-        self.set_vllm_memmory(scheduler_max_concurrency)
         self.max_vllm_memory: Optional[int] = None
+        self.set_vllm_memmory(scheduler_max_concurrency)
 
     def set_vllm_memmory(self, scheduler_max_concurrency: int):
         """
