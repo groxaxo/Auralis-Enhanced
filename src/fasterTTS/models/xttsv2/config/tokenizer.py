@@ -159,8 +159,9 @@ def split_sentence(text: str, lang: str, text_split_length: int = 250) -> List[s
     if current_split:
         splits.append(" ".join(current_split))
 
+    cleaned_sentences = [s[:-1] if s.endswith('.') else s for s in splits if s] # prevents annoying sounds in italian
     # Clean up splits
-    return [s for s in splits if s]
+    return cleaned_sentences
 
 _whitespace_re = re.compile(r"\s+")
 

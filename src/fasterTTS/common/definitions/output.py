@@ -112,7 +112,8 @@ class TTSOutput:
             )
         else:
             sample_rate = self.sample_rate
-
+        if wav_tensor.dtype != torch.float32:
+            wav_tensor = wav_tensor.to(torch.float32)
         torchaudio.save(
             filename,
             wav_tensor,

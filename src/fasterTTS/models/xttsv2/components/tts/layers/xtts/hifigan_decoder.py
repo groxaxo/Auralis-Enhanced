@@ -40,30 +40,11 @@ class ResBlock1(torch.nn.Module):
                         channels,
                         kernel_size,
                         1,
-                        dilation=dilation[0],
-                        padding=get_padding(kernel_size, dilation[0]),
+                        dilation=dilation[i],
+                        padding=get_padding(kernel_size, dilation[i]),
                     )
-                ),
-                weight_norm(
-                    Conv1d(
-                        channels,
-                        channels,
-                        kernel_size,
-                        1,
-                        dilation=dilation[1],
-                        padding=get_padding(kernel_size, dilation[1]),
-                    )
-                ),
-                weight_norm(
-                    Conv1d(
-                        channels,
-                        channels,
-                        kernel_size,
-                        1,
-                        dilation=dilation[2],
-                        padding=get_padding(kernel_size, dilation[2]),
-                    )
-                ),
+                )
+                for i in range(3)
             ]
         )
 
@@ -78,27 +59,8 @@ class ResBlock1(torch.nn.Module):
                         dilation=1,
                         padding=get_padding(kernel_size, 1),
                     )
-                ),
-                weight_norm(
-                    Conv1d(
-                        channels,
-                        channels,
-                        kernel_size,
-                        1,
-                        dilation=1,
-                        padding=get_padding(kernel_size, 1),
-                    )
-                ),
-                weight_norm(
-                    Conv1d(
-                        channels,
-                        channels,
-                        kernel_size,
-                        1,
-                        dilation=1,
-                        padding=get_padding(kernel_size, 1),
-                    )
-                ),
+                )
+                for _ in range(3)
             ]
         )
 
@@ -114,12 +76,9 @@ class ResBlock1(torch.nn.Module):
         for c1, c2 in zip(self.convs1, self.convs2):
             xt = F.leaky_relu(x, LRELU_SLOPE)
             xt = c1(xt)
-            xt.detach_()
             xt = F.leaky_relu(xt, LRELU_SLOPE)
             xt = c2(xt)
-            x.add_(xt)
-            del xt
-
+            x = xt + x
         return x
 
     def remove_weight_norm(self):
@@ -154,20 +113,11 @@ class ResBlock2(torch.nn.Module):
                         channels,
                         kernel_size,
                         1,
-                        dilation=dilation[0],
-                        padding=get_padding(kernel_size, dilation[0]),
+                        dilation=dilation[i],
+                        padding=get_padding(kernel_size, dilation[i]),
                     )
-                ),
-                weight_norm(
-                    Conv1d(
-                        channels,
-                        channels,
-                        kernel_size,
-                        1,
-                        dilation=dilation[1],
-                        padding=get_padding(kernel_size, dilation[1]),
-                    )
-                ),
+                )
+                for i in range(2)
             ]
         )
 
@@ -247,7 +197,7 @@ class HifiganGenerator(torch.nn.Module):
         self.resblocks = nn.ModuleList()
         for i in range(len(self.ups)):
             ch = upsample_initial_channel // (2 ** (i + 1))
-            for _, (k, d) in enumerate(zip(resblock_kernel_sizes, resblock_dilation_sizes)):
+            for k, d in zip(resblock_kernel_sizes, resblock_dilation_sizes):
                 self.resblocks.append(resblock(ch, k, d))
         # post convolution layer
         self.conv_post = weight_norm(Conv1d(ch, out_channels, 7, 1, padding=3, bias=conv_post_bias))
@@ -267,41 +217,38 @@ class HifiganGenerator(torch.nn.Module):
                 self.conds.append(nn.Conv1d(cond_channels, ch, 1))
 
     def forward(self, x, g=None):
-        """Versione ottimizzata per memoria e performance"""
-        with torch.amp.autocast('cuda',enabled=True):  # Enables mixed_precision
-            o = self.conv_pre(x)
+        """
+        Args:
+            x (Tensor): feature input tensor.
+            g (Tensor): global conditioning input tensor.
 
-            if hasattr(self, "cond_layer"):
-                o = o + self.cond_layer(g)
+        Returns:
+            Tensor: output waveform.
 
-            for i in range(self.num_upsamples):
-                # apply in-place ReLU
-                o = F.leaky_relu(o, LRELU_SLOPE, inplace=True)
-                o = self.ups[i](o)
+        Shapes:
+            x: [B, C, T]
+            Tensor: [B, 1, T]
+        """
+        with torch.no_grad():
+            with torch.amp.autocast('cuda'):
+                x = self.conv_pre(x).unsqueeze(0)
+                if hasattr(self, "cond_layer"):
+                    x.add_(self.cond_layer(g))
+                for i in range(self.num_upsamples):
+                    x = F.leaky_relu(x, LRELU_SLOPE, inplace=True)
+                    x = self.ups[i](x)
 
-                if self.cond_in_each_up_layer:
-                    o = o + self.conds[i](g)
+                    if self.cond_in_each_up_layer:
+                        x.add_(self.conds[i](g))
 
-                # efficient MRF block
-                for j in range(self.num_kernels):
-                    if j == 0:
-                        # Prima iterazione: inizializza z_sum
-                        z_sum = self.resblocks[i * self.num_kernels + j](o)
-                    else:
-                        # Accumula in-place per risparmiare memoria
-                        z_sum.add_(self.resblocks[i * self.num_kernels + j](o))
-
-                # divide in place
-                o = z_sum.div_(self.num_kernels)
-
-                # Forza il rilascio della memoria
-                z_sum = None
-                torch.cuda.empty_cache()
-
-            o = F.leaky_relu(o, LRELU_SLOPE, inplace=True)
-            o = self.conv_post(o)
-            o = torch.tanh(o)
-            return o
+                    z_sum = 0
+                    for j in range(self.num_kernels):
+                        z_sum += (self.resblocks[i * self.num_kernels + j](x)).float()
+                    x = z_sum / self.num_kernels
+                x = F.leaky_relu(x, inplace=True)
+                x = self.conv_post(x)
+                x = torch.tanh(x)
+                return x
 
     @torch.no_grad()
     def inference(self, c):
@@ -329,9 +276,7 @@ class HifiganGenerator(torch.nn.Module):
         remove_parametrizations(self.conv_pre, "weight")
         remove_parametrizations(self.conv_post, "weight")
 
-    def load_checkpoint(
-        self, config, checkpoint_path, eval=False, cache=False
-    ):  # pylint: disable=unused-argument, redefined-builtin
+    def load_checkpoint(self, config, checkpoint_path, eval=False, cache=False):
         state = torch.load(checkpoint_path, map_location=torch.device("cpu"))
         self.load_state_dict(state["model"])
         if eval:
@@ -352,10 +297,10 @@ class SELayer(nn.Module):
         )
 
     def forward(self, x):
-        b, c, _, _ = x.size()
-        y = self.avg_pool(x).view(b, c)
-        y = self.fc(y).view(b, c, 1, 1)
-        return x * y
+        y = self.avg_pool(x).view(x.size(0), x.size(1))
+        y = self.fc(y).view(x.size(0), x.size(1), 1, 1)
+        x = x * y
+        return x
 
 
 class SEBasicBlock(nn.Module):
@@ -365,38 +310,36 @@ class SEBasicBlock(nn.Module):
         super(SEBasicBlock, self).__init__()
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(planes)
+        self.relu = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(planes)
-        self.relu = nn.ReLU(inplace=True)
         self.se = SELayer(planes, reduction)
         self.downsample = downsample
-        self.stride = stride
 
     def forward(self, x):
         residual = x
 
-        out = self.conv1(x)
-        out = self.relu(out)
-        out = self.bn1(out)
+        x = self.conv1(x)
+        x = self.relu(x)
+        x = self.bn1(x)
 
-        out = self.conv2(out)
-        out = self.bn2(out)
-        out = self.se(out)
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = self.se(x)
 
         if self.downsample is not None:
-            residual = self.downsample(x)
+            residual = self.downsample(residual)
 
-        out += residual
-        out = self.relu(out)
-        return out
+        x += residual
+        x = self.relu(x)
+        return x
 
 
 def set_init_dict(model_dict, checkpoint_state, c):
     # Partial initialization: if there is a mismatch with new and old layer, it is skipped.
     for k, v in checkpoint_state.items():
         if k not in model_dict:
-            print(" | > Layer missing in the model definition: {}".format(k))
-    # 1. filter out unnecessary keys
+            print(f" | > Layer missing in the model definition: {k}")
     pretrained_dict = {k: v for k, v in checkpoint_state.items() if k in model_dict}
     # 2. filter out different size layers
     pretrained_dict = {k: v for k, v in pretrained_dict.items() if v.numel() == model_dict[k].numel()}
@@ -406,7 +349,7 @@ def set_init_dict(model_dict, checkpoint_state, c):
             pretrained_dict = {k: v for k, v in pretrained_dict.items() if reinit_layer_name not in k}
     # 4. overwrite entries in the existing state dict
     model_dict.update(pretrained_dict)
-    print(" | > {} / {} layers are restored.".format(len(pretrained_dict), len(model_dict)))
+    print(f" | > {len(pretrained_dict)} / {len(model_dict)} layers are restored.")
     return model_dict
 
 
@@ -414,13 +357,14 @@ class PreEmphasis(nn.Module):
     def __init__(self, coefficient=0.97):
         super().__init__()
         self.coefficient = coefficient
-        self.register_buffer("filter", torch.FloatTensor([-self.coefficient, 1.0]).unsqueeze(0).unsqueeze(0))
+        self.register_buffer("filter", torch.tensor([-self.coefficient, 1.0], dtype=torch.float32).view(1, 1, -1))
 
     def forward(self, x):
         assert len(x.size()) == 2
 
         x = torch.nn.functional.pad(x.unsqueeze(1), (1, 0), "reflect")
-        return torch.nn.functional.conv1d(x, self.filter).squeeze(1)
+        x = torch.nn.functional.conv1d(x, self.filter).squeeze(1)
+        return x
 
 
 class ResNetSpeakerEncoder(nn.Module):
@@ -479,7 +423,7 @@ class ResNetSpeakerEncoder(nn.Module):
 
         self.attention = nn.Sequential(
             nn.Conv1d(num_filters[3] * outmap_size, 128, kernel_size=1),
-            nn.ReLU(),
+            nn.ReLU(inplace=True),
             nn.BatchNorm1d(128),
             nn.Conv1d(128, num_filters[3] * outmap_size, kernel_size=1),
             nn.Softmax(dim=2),
@@ -512,11 +456,9 @@ class ResNetSpeakerEncoder(nn.Module):
                 nn.BatchNorm2d(planes * block.expansion),
             )
 
-        layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample))
+        layers = [block(self.inplanes, planes, stride, downsample)]
         self.inplanes = planes * block.expansion
-        for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes))
+        layers.extend(block(self.inplanes, planes) for _ in range(1, blocks))
 
         return nn.Sequential(*layers)
 
@@ -543,7 +485,7 @@ class ResNetSpeakerEncoder(nn.Module):
             x = self.torch_spec(x)
 
         if self.log_input:
-            x = (x + 1e-6).log()
+            x = x.clamp(min=1e-6).log()
         x = self.instancenorm(x).unsqueeze(1)
 
         x = self.conv1(x)
@@ -555,7 +497,7 @@ class ResNetSpeakerEncoder(nn.Module):
         x = self.layer3(x)
         x = self.layer4(x)
 
-        x = x.reshape(x.size()[0], -1, x.size()[-1])
+        x = x.reshape(x.size(0), -1, x.size(-1))
 
         w = self.attention(x)
 
@@ -563,7 +505,7 @@ class ResNetSpeakerEncoder(nn.Module):
             x = torch.sum(x * w, dim=2)
         elif self.encoder_type == "ASP":
             mu = torch.sum(x * w, dim=2)
-            sg = torch.sqrt((torch.sum((x**2) * w, dim=2) - mu**2).clamp(min=1e-5))
+            sg = torch.sqrt((torch.sum((x ** 2) * w, dim=2) - mu ** 2).clamp(min=1e-5))
             x = torch.cat((mu, sg), 1)
 
         x = x.view(x.size()[0], -1)
@@ -689,26 +631,23 @@ class HifiDecoder(torch.nn.Module):
             x: [B, C, T]
             Tensor: [B, 1, T]
         """
-        with torch.amp.autocast('cuda', enabled=True):
-            z = F.interpolate(
-                latents.transpose(1, 2),
-                scale_factor=[self.ar_mel_length_compression / self.output_hop_length],
+
+        z = torch.nn.functional.interpolate(
+            latents.transpose(1, 2),
+            scale_factor=self.ar_mel_length_compression / self.output_hop_length,
+            mode="linear",
+            align_corners=False,
+        ).squeeze(1)
+        # upsample to the right sr
+        if self.output_sample_rate != self.input_sample_rate:
+            z = torch.nn.functional.interpolate(
+                z,
+                scale_factor=self.output_sample_rate / self.input_sample_rate,
                 mode="linear",
-                align_corners=False  # Faster
-            ).squeeze(1)
-
-            # upsample to the right sr
-            if self.output_sample_rate != self.input_sample_rate:
-                z = F.interpolate(
-                    z,
-                    scale_factor=[self.output_sample_rate / self.input_sample_rate],
-                    mode="linear",
-                    align_corners=False
-                ).squeeze(0)
-            del latents
-            torch.cuda.empty_cache()
-
-            return self.waveform_decoder(z, g=g)
+                align_corners=False,
+            ).squeeze(0)
+        o = self.waveform_decoder(z, g=g)
+        return o
 
     @torch.no_grad()
     def inference(self, c, g):
@@ -730,8 +669,7 @@ class HifiDecoder(torch.nn.Module):
         state = load_fsspec(checkpoint_path, map_location=torch.device("cpu"))
         # remove unused keys
         state = state["model"]
-        states_keys = list(state.keys())
-        for key in states_keys:
+        for key in list(state.keys()):
             if "waveform_decoder." not in key and "speaker_encoder." not in key:
                 del state[key]
 

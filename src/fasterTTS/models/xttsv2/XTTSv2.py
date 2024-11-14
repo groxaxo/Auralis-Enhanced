@@ -35,7 +35,6 @@ from .components.tts.layers.xtts.hifigan_decoder import HifiDecoder
 from .components.tts.layers.xtts.latent_encoder import ConditioningEncoder
 from .components.tts.layers.xtts.perceiver_encoder import PerceiverResampler
 
-@torch.compile
 class XTTSv2Engine(BaseAsyncTTSEngine):
     """Async XTTS model implementation using VLLM's AsyncEngine."""
 
@@ -101,8 +100,6 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 use_flash_attn=False,
             )
 
-        self.conditioning_perceiver.eval()
-
         # Initialize HiFi-GAN decoder
         self.hifigan_decoder = HifiDecoder(
             input_sample_rate=self.hifi_config.input_sample_rate,
@@ -125,8 +122,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.init_vllm_engine(self.max_concurrency)
 
         # Semaphore for concurrency control of the encoding process
-        self.encoder_semaphore = asyncio.BoundedSemaphore(1)#self.max_concurrency // 2)
-        self.decoder_semaphore = asyncio.BoundedSemaphore(1)#self.max_concurrency // 4)
+        self.encoder_semaphore = asyncio.BoundedSemaphore(1) # it can be heightened for better speed
+        self.decoder_semaphore = asyncio.BoundedSemaphore(1) # also this
         self.eval()
     @property
     def conditioning_config(self) -> ConditioningConfig:
@@ -471,7 +468,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         original_token_ids = token_ids.copy()
 
         # Reset token_ids on each attempt
-        token_ids = [self.mel_bos_token_id] + list(original_token_ids) + [self.mel_eos_token_id] * 5
+        token_ids = ([self.mel_bos_token_id] + list(original_token_ids) + [self.mel_eos_token_id] *
+                     (4 if original_token_ids[-1] == self.mel_eos_token_id else 5))
 
         engine_inputs = TokensPrompt(prompt_token_ids=token_ids)
         engine_inputs["multi_modal_data"] = conditioning
@@ -610,4 +608,6 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             logging.error(f"Error in generator processing: {e}")
             raise # Re-raise the exception
 
+    async def shutdown(self):
+        await self.llm_engine.shutdown_background_loop()
 

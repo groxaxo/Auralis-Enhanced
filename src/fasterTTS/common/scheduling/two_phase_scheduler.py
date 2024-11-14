@@ -30,7 +30,7 @@ class TwoPhaseScheduler:
         self.generator_count_lock = asyncio.Lock()
 
         self.is_running = False
-        self.queue_processor_task = None
+        self.queue_processor_tasks = []  # Initialize as an empty list
         self.cleanup_lock = asyncio.Lock()
 
     async def start(self):

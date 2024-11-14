@@ -517,15 +517,15 @@ class GPT2Model(nn.Module):
             make_empty_intermediate_tensors_factory(["hidden_states"],
                                                     config.hidden_size))
 
-    def is_tensor_errored(self, tensor: torch.Tensor):
-        try:
-            if not torch.is_tensor(tensor):
-                return False
-            if tensor[0] == 0:
-                return False
-        except Exception as e:
-            print(f"Error: {e}")
-            return True
+    #def is_tensor_errored(self, tensor: torch.Tensor):
+    #    try:
+    #        if not torch.is_tensor(tensor):
+    #            return False
+    #        if tensor[0] == 0:
+    #            return False
+    #    except Exception as e:
+    #        print(f"Error: {e}")
+    #        return True
     def forward(
             self,
             input_ids: torch.Tensor,
@@ -537,11 +537,14 @@ class GPT2Model(nn.Module):
             is_first_iteration: bool = False,
             is_logits_only_mode: bool = False,
     ) -> Union[torch.Tensor, IntermediateTensors]:
-        ids_for_unpacking = []
+
         if get_pp_group().is_first_rank:
             if is_first_iteration and not is_logits_only_mode:
                 input_ids = input_ids[-1].reshape(1, 1)
             elif is_logits_only_mode:
+                if  isinstance(input_embeds, torch.Tensor) and len(input_embeds) > 1 and input_embeds.shape[0] > 1:
+                    # if two equal tensors are passed, we need vllm aggregate them in a new (batched) tensor
+                    input_embeds = list(input_embeds) # so we unbacth them :)
                 if isinstance(input_embeds, list):
                     starting_idx = []
                     for input_embed in input_embeds:
@@ -568,9 +571,11 @@ class GPT2Model(nn.Module):
                         torch.arange(0, end - start, device=input_ids.device).reshape(1, -1)
                         for start, end in zip(cumulative_starts, cumulative_ends)
                     ], dim=-1).squeeze(0)
+
                 else:
                     input_ids = input_ids[input_embeds.shape[1]:].reshape(1, -1)
                     position_ids = torch.arange(0, input_ids.shape[1], device=input_ids.device)
+
             else:
                 input_ids = input_ids
 
@@ -602,6 +607,7 @@ class GPT2Model(nn.Module):
                     hidden_states = torch.cat([input_embeds, hidden_states], dim=0)
 
             hidden_states = hidden_states.view(-1, self.embed_dim)
+
         else:
             assert intermediate_tensors is not None
             hidden_states = intermediate_tensors["hidden_states"]

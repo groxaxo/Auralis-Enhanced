@@ -18,9 +18,18 @@ class TTS:
         self.tts_engine: Optional[BaseAsyncTTSEngine] = None  # Initialize your TTS engine here
         self.concurrency = scheduler_max_concurrency
         self.max_vllm_memory: Optional[int] = None
-        self.set_vllm_memmory(scheduler_max_concurrency)
+        self.set_vllm_memory(scheduler_max_concurrency)
 
-    def set_vllm_memmory(self, scheduler_max_concurrency: int):
+        # Create a persistent event loop and thread for background tasks
+        self.loop = asyncio.new_event_loop()
+        self.loop_thread = threading.Thread(target=self._run_event_loop, daemon=True)
+        self.loop_thread.start()
+
+    def _run_event_loop(self):
+        asyncio.set_event_loop(self.loop)
+        self.loop.run_forever()
+
+    def set_vllm_memory(self, scheduler_max_concurrency: int):
         """
         Based on the expected concurrency we allocate memory for VLLM.
         This is not intended as a permanent solution but rather as a temporary workaround.
@@ -181,18 +190,7 @@ class TTS:
                     finally:
                         q.put(None)
 
-                def run_async_gen():
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    try:
-                        loop.run_until_complete(async_gen())
-                    except Exception as e:
-                        q.put(e)
-                    finally:
-                        q.put(None)
-                        loop.close()
-
-                threading.Thread(target=run_async_gen, daemon=True).start()
+                asyncio.run_coroutine_threadsafe(async_gen(), self.loop)
 
                 while True:
                     item = q.get()
@@ -204,8 +202,9 @@ class TTS:
 
             return sync_generator()
         else:
+            complete_audio = []
+
             async def async_combine_chunks():
-                complete_audio = []
                 for sub_request in requests:
                     async for chunk in self.scheduler.run(
                             inputs=sub_request,
@@ -215,39 +214,14 @@ class TTS:
                         complete_audio.append(chunk)
                 return TTSOutput.combine_outputs(complete_audio)
 
-            # Check if we're already in an event loop
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # If we're already in a running event loop, create a new one in a separate thread
-                    q = queue.Queue()
+            future = asyncio.run_coroutine_threadsafe(async_combine_chunks(), self.loop)
+            result = future.result()
+            return result
 
-                    def run_in_thread():
-                        new_loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(new_loop)
-                        try:
-                            result = new_loop.run_until_complete(async_combine_chunks())
-                            q.put(result)
-                        except Exception as e:
-                            q.put(e)
-                        finally:
-                            new_loop.close()
-
-                    thread = threading.Thread(target=run_in_thread)
-                    thread.start()
-                    thread.join()
-
-                    result = q.get()
-                    if isinstance(result, Exception):
-                        raise result
-                    return result
-                else:
-                    return loop.run_until_complete(async_combine_chunks())
-            except RuntimeError:
-                # No event loop exists yet
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    return loop.run_until_complete(async_combine_chunks())
-                finally:
-                    loop.close()
+    async def shutdown(self):
+        if self.scheduler:
+            await self.scheduler.shutdown()
+        if self.tts_engine and hasattr(self.tts_engine, 'shutdown'):
+            await self.tts_engine.shutdown()
+        self.loop.call_soon_threadsafe(self.loop.stop())
+        self.loop_thread.join()
