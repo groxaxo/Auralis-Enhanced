@@ -607,7 +607,8 @@ class GPT2Model(nn.Module):
                     hidden_states = torch.cat([input_embeds, hidden_states], dim=0)
 
             hidden_states = hidden_states.view(-1, self.embed_dim)
-
+            if hidden_states.shape[0] != (attn_metadata.num_prefill_tokens+attn_metadata.num_decode_tokens):
+                print('Errore')
         else:
             assert intermediate_tensors is not None
             hidden_states = intermediate_tensors["hidden_states"]

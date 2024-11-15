@@ -143,3 +143,5 @@ playwright/
 
 # Windows
 Thumbs.db
+/tests/benchmarks/
+/src/entrypoints/

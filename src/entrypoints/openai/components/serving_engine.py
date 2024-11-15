@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Literal, Optional, Union, AsyncGenerator, BinaryIO
-from fasterTTS.common.definitions.requests import TTSRequest
-from fasterTTS.common.definitions.output import TTSOutput
+from auralis.common.definitions.requests import TTSRequest
+from auralis.common.definitions.output import TTSOutput
 import re
 import io
 import aiofiles

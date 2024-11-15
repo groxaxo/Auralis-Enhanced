@@ -1,12 +1,12 @@
 import uuid
-from typing import Any, Dict, AsyncGenerator, Callable, Awaitable
+from typing import Any, Dict, AsyncGenerator, Callable, Awaitable, Optional
 import asyncio
 import time
 from contextlib import asynccontextmanager
 
 
-from fasterTTS.common.definitions.scheduler import QueuedRequest, TaskState
-from fasterTTS.common.logging.logger import setup_logger
+from auralis.common.definitions.scheduler import QueuedRequest, TaskState
+from auralis.common.logging.logger import setup_logger
 
 
 class TwoPhaseScheduler:
@@ -21,7 +21,7 @@ class TwoPhaseScheduler:
         self.request_timeout = request_timeout
         self.generator_timeout = generator_timeout
 
-        self.request_queue: asyncio.Queue[QueuedRequest] = None
+        self.request_queue: Optional[asyncio.Queue[QueuedRequest]] = None
         self.active_requests: Dict[str, QueuedRequest] = {}
         self.second_phase_sem = None
 

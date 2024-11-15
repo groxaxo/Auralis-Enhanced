@@ -2,10 +2,10 @@ import argparse
 import logging
 from typing import Optional
 
-from fasterTTS.core.tts import TTS
+from auralis.core.tts import TTS
 from components.serving_engine import OpenAICompatibleTTS
 from components.tts_server import create_server
-from fasterTTS.common.logging.logger import setup_logger
+from auralis.common.logging.logger import setup_logger
 
 
 def parse_args():

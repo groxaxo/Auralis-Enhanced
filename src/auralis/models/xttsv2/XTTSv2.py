@@ -122,8 +122,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.init_vllm_engine(self.max_concurrency)
 
         # Semaphore for concurrency control of the encoding process
-        self.encoder_semaphore = asyncio.BoundedSemaphore(1) # it can be heightened for better speed
-        self.decoder_semaphore = asyncio.BoundedSemaphore(1) # also this
+        self.encoder_semaphore = asyncio.BoundedSemaphore(self.max_concurrency // 15) # empirically find a good value
+        self.decoder_semaphore = asyncio.BoundedSemaphore(self.max_concurrency // 15) # empirically find a good value
         self.eval()
     @property
     def conditioning_config(self) -> ConditioningConfig:
@@ -609,5 +609,5 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             raise # Re-raise the exception
 
     async def shutdown(self):
-        await self.llm_engine.shutdown_background_loop()
+        self.llm_engine.shutdown_background_loop()
 

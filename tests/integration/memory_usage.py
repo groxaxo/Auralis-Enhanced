@@ -6,9 +6,9 @@ import gc
 import asyncio
 from torch.profiler import profile, record_function, ProfilerActivity
 
-from fasterTTS.common.definitions.requests import TTSRequest
-from fasterTTS.models.xttsv2.XTTSv2 import XTTSv2Engine
-from fasterTTS.core.tts import TTS
+from auralis.common.definitions.requests import TTSRequest
+from auralis.models.xttsv2.XTTSv2 import XTTSv2Engine
+from auralis.core.tts import TTS
 
 # Sample Text
 text = """La Storia di Villa Margherita

@@ -4,7 +4,7 @@ import torch
 from queue import Queue
 from concurrent.futures import ThreadPoolExecutor
 
-from fasterTTS.common.logging.logger import setup_logger
+from auralis.common.logging.logger import setup_logger
 
 
 class SyncCollectorWrapper:

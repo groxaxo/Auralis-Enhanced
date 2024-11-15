@@ -2,7 +2,7 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import StreamingResponse
 
 from entrypoints.openai.components.serving_engine import OpenAICompatibleTTS
-from fasterTTS import TTS
+from auralis import TTS
 
 app = FastAPI()
 
