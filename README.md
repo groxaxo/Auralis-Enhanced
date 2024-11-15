@@ -30,7 +30,7 @@ By splitting the workload, we keep things efficient and lightning-fast. Think of
 ### Installation
 
 ```python
-pip install fastertts
+pip install auralis
 ```
 
 ### Usage

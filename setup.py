@@ -11,13 +11,13 @@ setup(
     packages=find_packages(where='src'),
     install_requires=[
         'asyncio',
-        'torch>=1.8.0',
+        'torch',
         'torchaudio',
         'librosa',
         'vllm',
         'safetensors',
     ],
-    python_requires='>=3.7',
+    python_requires='>=3.10',
     classifiers=[
         'Programming Language :: Python :: 3',
         'Operating System :: Linux',
