@@ -539,12 +539,12 @@ class GPT2Model(nn.Module):
     ) -> Union[torch.Tensor, IntermediateTensors]:
 
         if get_pp_group().is_first_rank:
+            if isinstance(input_embeds, torch.Tensor) and len(input_embeds) > 1 and len(input_embeds.shape) < 4:
+                # if two equal tensors are passed, vllm aggregate them in a new (batched) tensor
+                input_embeds = list(input_embeds)  # so we unbacth them :) (unless we are in the profiling run)
             if is_first_iteration and not is_logits_only_mode:
                 input_ids = input_ids[-1].reshape(1, 1)
             elif is_logits_only_mode:
-                if  isinstance(input_embeds, torch.Tensor) and len(input_embeds) > 1 and input_embeds.shape[0] > 1:
-                    # if two equal tensors are passed, we need vllm aggregate them in a new (batched) tensor
-                    input_embeds = list(input_embeds) # so we unbacth them :)
                 if isinstance(input_embeds, list):
                     starting_idx = []
                     for input_embed in input_embeds:
@@ -602,7 +602,7 @@ class GPT2Model(nn.Module):
                     ], dim=0)
                 else:
                     input_embeds = input_embeds.view(-1, input_embeds.shape[-1])
-                    if input_embeds.shape[0] == attn_metadata.num_prefill_tokens:
+                    if input_embeds.shape[0] == attn_metadata.num_prefill_tokens: # this is the profiling run
                         input_embeds = input_embeds[:-1]
                     hidden_states = torch.cat([input_embeds, hidden_states], dim=0)
 
