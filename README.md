@@ -6,7 +6,7 @@ Imagine turning the entire first Harry Potter book into speech in just **10 minu
 
 ## What's This All About?
 
-Auralis is a high-performance TTS (Text-to-Speech) engine that leverages a two-step scheduler and the power of **VLLM** to serve XTTS models at lightning speed. Whether you're dealing with short sentences or entire novels, this bad boy handles it all with ease.
+Auralis is a high-performance TTS (Text-to-Speech) engine that leverages a two-step scheduler and the power of **VLLM** to serve TTS models at lightning speed. Whether you're dealing with short sentences or entire novels, this bad boy handles it all with ease.
 
 ## Why Should You Care?
 
