@@ -61,7 +61,7 @@ output.save('output.wav')
 
 ### Streaming Long Texts
 
-Got a long text? No worries! Auralis can stream the output so you don't have to wait forever.
+Got a long text? No worries! Auralis can be run as a generator so you don't have to wait forever.
 
 ```python
 from auralis import TTS, TTSRequest
@@ -87,6 +87,37 @@ for audio_chunk in audio_generator:
     #audio_chunk.play()
     #audio_chunk.save(f'output_{i}.wav')
     pass
+```
+
+###  `TTSOutput` Output Class
+We were tired of complex handling of model output, so we created a unified output object with some of the most important features when working with audio generation tools.
+Some of them are:
+
+1. **Format Conversion Utilities:**
+```python
+- to_tensor(): Converts numpy array to torch tensor
+- to_bytes(): Converts audio to bytes format (supports 'wav' or 'raw')
+- from_tensor(): Creates TTSOutput from torch tensor
+- from_file(): Creates TTSOutput from audio file
+```
+
+2. **Audio Processing Utilities:**
+```python
+- combine_outputs(): Combines multiple TTSOutput instances into one
+- resample(): Creates new TTSOutput with resampled audio
+- get_info(): Returns (number of samples, sample rate, duration)
+```
+
+3. **File Handling:**
+```python
+- save(): Saves audio to file with optional resampling and format specification
+```
+
+4. **Playback Utilities:**
+```python
+- play(): Plays audio through default sound device
+- display(): Shows audio player in Jupyter notebook
+- preview(): Smart play method that tries display() first, then falls back to play()
 ```
 
 ### Adding Your Own Models
