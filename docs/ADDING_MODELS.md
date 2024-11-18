@@ -9,14 +9,21 @@ So, you want to bring your own TTS models into the mix? Sweet! Here's how you ca
 ### 1. Create a New Engine Class
 
 Your model needs to inherit from `BaseAsyncTTSEngine` and implement a few methods.
-
+Create a new folder under auralis/models/[your_model] and inside putall of your files
 ```python
 from auralis.models.base import BaseAsyncTTSEngine
 from auralis.models.registry import MODEL_REGISTRY
 
-@MODEL_REGISTRY.register('my_custom_model')
 class MyCustomEngine(BaseAsyncTTSEngine):
     # Implement the required methods here
+```
+
+And in your main code, before the call to the model (or in the init file of the model folder) 
+```python
+from auralis.models.registry import register_model
+from auralis.models.your_new_model import YourModelArch
+
+register_model("yourmodel", YourModelArch) # the lower caps name, must be the same in the model arch under model type and also the same on the config file
 ```
 
 ### 2. Implement Required Methods
@@ -28,6 +35,10 @@ You'll need to implement:
 - `conditioning_config`: Defines how your model handles conditioning like speaker embeddings.
 
 Check out `xttsv2_engine.py` for inspiration.
+
+### 3. Implement HF methods such as form pretrained and and make a compatible (fast) tokenier if not already present
+
+To do this steps you can also take inspiration from our xtts implementation
 
 ### 4. Update the TTS Class
 
