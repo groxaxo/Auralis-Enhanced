@@ -9,6 +9,7 @@ from typing import Optional, Union, Iterable, Tuple, Mapping
 
 from torch import Tensor
 from transformers import GPT2Config
+
 from vllm.attention import AttentionMetadata
 from vllm.config import CacheConfig, MultiModalConfig
 from vllm.distributed import get_pp_group
@@ -30,11 +31,26 @@ from collections import defaultdict
 
 PrefillLength= Union[int, List[int]]
 TokenPosition= Union[int, List[int]]
+TokenId = Union[Union[torch.Tensor,int], List[Union[torch.Tensor,int]]]
 
 @dataclass
 class TokenPositionAndPrefillTuple:
     prefill_len: Optional[PrefillLength] = None
     pos_id: Optional[TokenPosition] = None
+    token_id: Optional[TokenId] = None
+
+    def update_(self,
+                prefill_len: Optional[PrefillLength] = None,
+                pos_id: Optional[TokenPosition] = None,
+                token_id: Optional[TokenId] = None):
+        if prefill_len is not None:
+           self.prefill_len=prefill_len
+        if pos_id is not None:
+            self.pos_id=pos_id
+        if token_id is not None:
+            self.token_id= token_id
+        return self
+
 
 class PositionalEmbeddingsCorrecter:
     """Corrects positional embeddings for XTTS model,
@@ -57,7 +73,10 @@ class PositionalEmbeddingsCorrecter:
         """Retrieve the prefill length for a given request_id."""
         return self.request_tracker_dict.get(request_id, None)
 
-    def get_by_next_token(self, next_token_ids: List[int], next_position_ids: List[int]) -> List[TokenPositionAndPrefillTuple]:
+    def get_by_next_token(self,
+                          next_token_ids: List[int],
+                          next_position_ids: List[int]
+                          ) -> List[Optional[TokenPositionAndPrefillTuple]]:
         """Retrieve prefill lengths for given token and position pairs.
 
         Args:
@@ -71,11 +90,14 @@ class PositionalEmbeddingsCorrecter:
             ValueError: If no valid token mappings are found
         """
         prefill_lengths = []
+        assert len(next_token_ids) == len(next_position_ids), "Token and position lists must have the same length"
+        if len(next_token_ids) == 0:
+            return prefill_lengths
         for next_token_id, next_position_id in zip(next_token_ids, next_position_ids):
             token_key = f"{next_token_id}_{next_position_id}"
             if token_key in self.token_to_request:
                 request_id = self.token_to_request[token_key]
-                prefill_lengths.append(self.request_tracker_dict[request_id])
+                prefill_lengths.append(self.request_tracker_dict[request_id].update_(token_id=next_token_id))
 
         if not prefill_lengths:
             raise ValueError(f"No valid mappings found for token pairs")
@@ -230,6 +252,7 @@ def dummy_conditioning_for_xtts(
                 dtype=ctx.model_config.dtype) for _ in range(audio_count)
         ],
             "is_logits_only_mode": False,
+            "sequence_length": -1,
         }
     }
 
@@ -253,14 +276,20 @@ def input_mapper_for_xtts(ctx: InputContext, data: Union[Dict, List[Tensor]]) ->
 
     embeds = data.get("embeds")
     is_logits_only_mode = data.get("is_logits_only_mode", False)
+    seq_len = data.get("sequence_length", -1)
 
     # Each item should be a torch tensor
     for audio_input in embeds:
         if not isinstance(audio_input, Tensor):
             raise NotImplementedError(f"Unsupported data type: {type(audio_input)}")
 
-    return MultiModalInputs({"cond_latents": embeds,
-                             "is_logits_only_mode": is_logits_only_mode})
+    return MultiModalInputs(
+        {
+            "cond_latents": embeds,
+            "is_logits_only_mode": is_logits_only_mode,
+            "sequence_length": seq_len,
+        }
+    )
 
 
 def input_processor_for_xtts2_gpt(ctx: InputContext, inputs: DecoderOnlyInputs):
@@ -320,6 +349,7 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
             quant_config,
             prefix="gpt"
         )
+
         self.final_norm =  nn.LayerNorm(config.hidden_size, bias=True, eps=config.layer_norm_epsilon)
         # Output head for mel tokens
         self.mel_head = ParallelLMHead(
@@ -331,6 +361,9 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
         )
         self.audio_start_generation_token = config.start_audio_token
 
+        self.gpt.audio_start_generation_token = self.audio_start_generation_token
+
+
         # Initialize logits processor and sampler
         logit_scale = getattr(config, "logit_scale", 1.0)
         self.logits_processor = LogitsProcessor(config.num_audio_tokens,
@@ -341,45 +374,220 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
         self.positional_embeddings_correcter = PositionalEmbeddingsCorrecter()
 
     @staticmethod
-    def check_is_logits_only_mode(is_logits_only_mode):
+    def check_is_logits_only_mode(is_logits_only_mode) -> torch.Tensor:
 
         # First check if it's a boolean
         if isinstance(is_logits_only_mode, bool):
-            return is_logits_only_mode
+            return torch.tensor([is_logits_only_mode])
 
         # Then check if it's a tensor
         if torch.is_tensor(is_logits_only_mode):
             # if it's a scalar tensor, return the value
             if is_logits_only_mode.numel() == 1:
-                return bool(is_logits_only_mode.item())
+                return is_logits_only_mode
             # for non-scalar tensors, check if all elements are the same
-            return is_logits_only_mode.any()
+            return is_logits_only_mode
 
         # Fallback
-        return bool(is_logits_only_mode)
+        return torch.tensor([bool(is_logits_only_mode)])
 
     @staticmethod
-    def _calculate_start_token_indices(cond_latents: List[torch.Tensor]) -> List[int]:
-        """Calcola gli indici dove inserire i token di start.
+    def find_len_of_sequence(
+            positions_ids: torch.Tensor,
+            index: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Starting from the index, it goes backward in the positions until it finds a jump higher than 1.
+        This function is tensorized for efficiency.
 
         Args:
-            cond_latents: Lista di tensori di condizionamento
+        positions_ids: Tensor of position IDs
+        index: Tensor of indices to start searching from
 
         Returns:
-            Lista di indici dove inserire i token di start
+        Tensor of sequence lengths
         """
-        indices = []
-        current_idx = 0
+        # Ensure index is a tensor
+        if not isinstance(index, torch.Tensor):
+            index = torch.tensor(index, device=positions_ids.device)
 
-        for cond_latent in cond_latents:
-            # Add
-            current_idx += cond_latent.shape[0]
-            # Aggiungi l'indice per il token di start dopo questo segmento
-            indices.append(current_idx)
-            # Incrementa per il token di start che verrà aggiunto
-            current_idx += 1
+        # Create a mask for valid positions (from 0 to index for each element)
+        mask = torch.arange(positions_ids.size(0), device=positions_ids.device).unsqueeze(0) <= index
 
-        return indices
+        # Calculate differences between adjacent positions
+        diffs = positions_ids[1:] - positions_ids[:-1]
+
+        # Pad the diffs tensor to match the original size
+        diffs = torch.cat([torch.ones(1, device=positions_ids.device), diffs])
+
+        # Find where the difference is different from 1 and is within the valid range
+        jumps = (diffs != 1) & mask
+
+        # Get the indices of the jumps
+        jump_indices = jumps.nonzero()
+
+        # If no jumps are found, return the index itself (full length)
+        if jump_indices.numel() == 0:
+            return torch.tensor([0], device=positions_ids.device)
+
+        # Get the last jump for each index
+        last_jumps = jump_indices[:, 1].reshape(-1, jump_indices.size(0))[:, -1]
+
+        # Calculate the sequence lengths
+        return last_jumps
+
+    def _maybe_correct_positions(self,
+                                     input_ids: torch.Tensor,
+                                     positions: torch.Tensor,
+                                     conditioning_inputs_list: List[torch.Tensor]):
+            correct_positions_ids = self.positional_embeddings_correcter.get_by_next_token(input_ids.tolist(),
+                                                                                           positions.tolist())
+            if len(correct_positions_ids) > 0:
+                position_and_id_tensor = torch.cat(
+                    [positions.unsqueeze(0), input_ids.unsqueeze(0)],
+                    dim=0
+                )
+
+                index_2d = torch.tensor(
+                    [(correct_positions_id.pos_id, correct_positions_id.token_id) for
+                     correct_positions_id in correct_positions_ids],
+                    device=positions.device
+                )
+
+                prefill_len_token = torch.tensor(
+                    [correct_positions_id.prefill_len for correct_positions_id in correct_positions_ids],
+                    device=positions.device)
+
+                position_and_id_expanded = position_and_id_tensor.unsqueeze(-1)
+                index_2d_expanded = index_2d.T.unsqueeze(1)
+
+                matches = (position_and_id_expanded == index_2d_expanded).all(dim=0)
+                matching_indices = matches.any(dim=0).nonzero().squeeze(1)
+
+                if not isinstance(conditioning_inputs_list, list) or len(conditioning_inputs_list) < 1:
+                    # this is the case where all the tokens are a "second iter" token,
+                    # so we don't have mixed stages in the batch
+                    return 1 + positions - prefill_len_token
+                # Iterate through all matching indices
+                for idx, seq_idx in enumerate(matching_indices):
+
+                    # Ensure we have corresponding conditioning input
+                    if (isinstance(conditioning_inputs_list, list) and
+                            len(conditioning_inputs_list) > 0 and
+                            idx < len(conditioning_inputs_list)):
+                        end_pos = seq_idx + 1
+                        start_pos = self.find_len_of_sequence(non_logit_positions, seq_idx)  # type: ignore
+
+                        # Apply correction only to the relevant part of the sequence
+                        positions[start_pos:end_pos] = 1 + positions[start_pos:end_pos] - \
+                                                                 correct_positions_ids[
+                                                                     idx].prefill_len
+
+                return positions
+
+    def _apply_op_to_seq_in_batch(self,
+                                     input_ids: torch.Tensor,
+                                     positions: torch.Tensor,
+                                     conditioning_inputs_list: List[torch.Tensor],
+                                     is_logit_only_mode: torch.Tensor,
+                                     seq_len: Union[torch.Tensor],
+                                     is_profiling_run: bool = False
+                                     ) -> Tuple[List[int], torch.Tensor, torch.Tensor]:
+        """
+        Apply different ops to the tensors sequence in the batch
+        Returns:
+            - List of starting indexes
+            - Modified input IDs
+            - Modified positions
+        """
+        if is_profiling_run:
+            return [], input_ids, positions
+
+        # Pre-allocate lists for better memory efficiency
+        starting_indexes = []
+
+        # Find all end markers at once
+        end_markers = (input_ids == self.audio_start_generation_token).nonzero(as_tuple=True)[0]
+
+        if len(end_markers) == 0:
+            positions = self._maybe_correct_positions(input_ids, positions, conditioning_inputs_list)
+            return [], input_ids, positions
+
+        # Create mask for valid conditioning inputs
+        cond_latent_mask = torch.tensor([
+            isinstance(cond_latent, torch.Tensor) and cond_latent.dim() > 1
+            for cond_latent in conditioning_inputs_list
+        ], device=input_ids.device)
+
+        effective_indexes = cond_latent_mask.nonzero(as_tuple=True)[0]
+
+        # Pre-calculate all sequence lengths
+        sequence_lengths = torch.tensor([
+            cond.shape[0] if isinstance(cond, torch.Tensor) and cond.dim() > 1
+            else 0 for cond in conditioning_inputs_list
+        ], device=input_ids.device)
+
+        # Create masks for efficient tensor operations
+        keep_mask = torch.ones(len(input_ids), dtype=torch.bool, device=input_ids.device)
+        non_logit_mask = torch.ones_like(keep_mask)
+
+        cumulative_offset = 0
+
+        for idx, end_marker in zip(effective_indexes, end_markers):
+            # Calculate effective positions
+            end_pos = end_marker.item() - cumulative_offset
+            start_pos = end_pos - sequence_lengths[idx].item()
+            start_pos_for_masking = start_pos + cumulative_offset
+
+            # Store original starting index
+            starting_indexes.append(start_pos_for_masking)
+
+            # Update masks
+            keep_mask[start_pos_for_masking:end_pos + cumulative_offset + 1] = False
+
+            if is_logit_only_mode[idx]:
+                # Mark range for logit-only mode
+                non_logit_mask[start_pos_for_masking:end_pos + cumulative_offset + seq_len[idx]] = False
+
+                # Generate positions for this sequence
+                # noinspection PyTypeChecker
+                new_positions = torch.arange(
+                    1, seq_len[idx], # starting from one since we have the start audio token
+                    device=input_ids.device,
+                    dtype=positions.dtype
+                )
+
+                # Update positions directly using indexing
+                if end_pos + len(new_positions) <= len(positions):
+                    positions[end_pos + 1 + cumulative_offset:end_pos + cumulative_offset + seq_len[idx]] = new_positions
+
+            cumulative_offset += (end_pos - start_pos + 1)
+
+        # Apply masks to get final tensors
+        # First we select tokens that are not used in the logit only mode
+        # we have tre scenarios here:
+        # 1. We are in a first pass where we have a sequence of 1s tokens terminated by a start audio token,
+        # we completely remove this and we keep the index on where to insert since we have already precomputed the values
+        # 2. We are in a "second pass" (autoregressive pass), using the default process of vllm with corrected positions ids
+        # 3. We are in a logit only mode, since in xttsv2 ewe need to capture the hs,
+        # and to do this we pass the conditioning alongside the generated tokens,
+        # we need to remove the placeholder sequence at the beginning while adjusting
+        # the positioning inside that condition
+        non_logit_input_ids = input_ids[non_logit_mask & keep_mask]
+        non_logit_positions = positions[non_logit_mask & keep_mask]
+
+        if correct_positions := self._maybe_correct_positions(
+            # if we arrive here it means that we had mixed "second passes" and "logit only mode" in the batch, in debug it hasn't happend yey, but it is kep for a possible edge case
+            non_logit_input_ids,
+            non_logit_positions,
+            conditioning_inputs_list
+        ):
+            positions[non_logit_mask & keep_mask] = correct_positions
+
+        modified_input_ids = input_ids[keep_mask]
+        modified_positions = positions[keep_mask]
+        return starting_indexes, modified_input_ids, modified_positions
+
 
     # noinspection PyMethodOverriding
     def forward( # type: ignore
@@ -389,20 +597,32 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
             kv_caches: List[torch.Tensor],
             attn_metadata: AttentionMetadata,
             intermediate_tensors: Optional["IntermediateTensors"] = None,
-            cond_latents: Optional[torch.Tensor] = None,
-            is_logits_only_mode: bool = False,
+            cond_latents: Optional[Union[torch.Tensor, List[torch.Tensor]]] = False, # so we can always have a list
+            is_logits_only_mode: Union[torch.Tensor, bool] = False,
+            sequence_length: Union[torch.Tensor,int] = -1,
             **kwargs,
     ) -> Union[torch.Tensor, "IntermediateTensors"]:
         """Forward pass following VLLM pattern."""
-        # it is not the first iter either if the cond latents are emtpy or if the kv_caches are not empty
-        is_first_iteration = len(input_ids) > 1 and torch.isin(input_ids, torch.tensor([1, 1024], device=input_ids.device)).all()
+
+        is_profiling_run = False
+
+        # we work with list conditioning so we convert them to list regardless of vllm batching
+        if isinstance(cond_latents, torch.Tensor):
+            if len(cond_latents.shape) > 3:
+                is_profiling_run = True
+            else:
+                # if two equal tensors are passed, vllm aggregate them in a new (batched) tensor
+                cond_latents = list(cond_latents)  # so we unbacth them :) (unless we are in the profiling run)
 
         is_logits_only_mode = self.check_is_logits_only_mode(is_logits_only_mode)
 
-        if not is_first_iteration and not is_logits_only_mode:
-            correct_positions_ids = self.positional_embeddings_correcter.get_by_next_token(input_ids.tolist(), positions.tolist())
-            positions = 1 + positions - torch.tensor([correct_positions_id.prefill_len for correct_positions_id in correct_positions_ids], device=positions.device)
-
+        #if not is_logits_only_mode:
+        starting_sequence_start_ids, input_ids, positions = self._apply_op_to_seq_in_batch(input_ids,
+                                                                                               positions,
+                                                                                               cond_latents,
+                                                                                               is_logits_only_mode,
+                                                                                               sequence_length,
+                                                                                               is_profiling_run)
 
         hidden_states = self.gpt(
             input_ids=input_ids,
@@ -412,8 +632,8 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
             intermediate_tensors=intermediate_tensors,
             # this is the conditioning input ( voice conditioning + text_embeds )
             input_embeds=cond_latents,
-            is_first_iteration=is_first_iteration,
-            is_logits_only_mode=is_logits_only_mode
+            starting_sequence_start_ids=starting_sequence_start_ids,
+            is_profiling_run= is_profiling_run,
         )
 
         return hidden_states
@@ -500,6 +720,7 @@ class GPT2Model(nn.Module):
         assert not config.add_cross_attention
         assert not config.scale_attn_by_inverse_layer_idx
         assert not config.reorder_and_upcast_attn
+        self.audio_start_generation_token = None
         self.embed_dim = config.hidden_size
         self.wte = VocabParallelEmbedding(config.num_audio_tokens, self.embed_dim)
         self.wpe = (
@@ -517,15 +738,17 @@ class GPT2Model(nn.Module):
             make_empty_intermediate_tensors_factory(["hidden_states"],
                                                     config.hidden_size))
 
-    #def is_tensor_errored(self, tensor: torch.Tensor):
-    #    try:
-    #        if not torch.is_tensor(tensor):
-    #            return False
-    #        if tensor[0] == 0:
-    #            return False
-    #    except Exception as e:
-    #        print(f"Error: {e}")
-    #        return True
+    @staticmethod
+    def _insert_conditioning_into_hidden_states(hidden_states: torch.Tensor,
+                                                conditioning_inputs: Optional[List[torch.Tensor]],
+                                                start_of_generation_embed: Optional[torch.Tensor],
+                                                insertion_ids: List[int]) -> torch.Tensor:
+
+        for idx, conditioning_input in zip(insertion_ids, conditioning_inputs):
+            hidden_states = torch.cat([hidden_states[:idx], conditioning_input, start_of_generation_embed, hidden_states[idx:]], dim=0)
+
+        return hidden_states
+
     def forward(
             self,
             input_ids: torch.Tensor,
@@ -534,81 +757,44 @@ class GPT2Model(nn.Module):
             attn_metadata: AttentionMetadata,
             intermediate_tensors: Optional[IntermediateTensors],
             input_embeds: Optional[torch.Tensor] = None,
-            is_first_iteration: bool = False,
-            is_logits_only_mode: bool = False,
+            starting_sequence_start_ids: Optional[List[int]] = None,
+            is_profiling_run: bool = False,
     ) -> Union[torch.Tensor, IntermediateTensors]:
 
         if get_pp_group().is_first_rank:
-            if isinstance(input_embeds, torch.Tensor) and len(input_embeds) > 1 and len(input_embeds.shape) < 4:
-                # if two equal tensors are passed, vllm aggregate them in a new (batched) tensor
-                input_embeds = list(input_embeds)  # so we unbacth them :) (unless we are in the profiling run)
-            if is_first_iteration and not is_logits_only_mode:
-                input_ids = input_ids[-1].reshape(1, 1)
-            elif is_logits_only_mode:
-                if isinstance(input_embeds, list):
-                    starting_idx = []
-                    for input_embed in input_embeds:
-                        starting_idx.append(input_embed.shape[0])
 
-                    ending_ids = attn_metadata.seq_lens
+            if len(starting_sequence_start_ids) > 0:
+                # we have starting sequences, so we just need to get one hs to insert later
+                starting_sequence_embed = self.wte(
+                    torch.tensor(
+                        self.audio_start_generation_token,
+                        device=input_ids.device
+                    ).unsqueeze(0)
+                )
 
-                    cumulative_starts = [starting_idx[0]]
-                    cumulative_ends = [ending_ids[0]]
-
-                    for i in range(1, len(starting_idx)):
-                        next_start = cumulative_ends[i - 1] + starting_idx[i]
-                        next_end = cumulative_ends[i - 1] + ending_ids[i]
-                        cumulative_starts.append(next_start)
-                        cumulative_ends.append(next_end)
-
-                    ids_for_unpacking = [end - start for start, end in zip(cumulative_starts, cumulative_ends)]
-
-                    input_ids = torch.cat([
-                        input_ids[start:end].reshape(1, -1)
-                        for start, end in zip(cumulative_starts, cumulative_ends)
-                    ], dim=-1)
-                    position_ids = torch.cat([
-                        torch.arange(0, end - start, device=input_ids.device).reshape(1, -1)
-                        for start, end in zip(cumulative_starts, cumulative_ends)
-                    ], dim=-1).squeeze(0)
-
-                else:
-                    input_ids = input_ids[input_embeds.shape[1]:].reshape(1, -1)
-                    position_ids = torch.arange(0, input_ids.shape[1], device=input_ids.device)
-
-            else:
-                input_ids = input_ids
+                starting_sequence_embed += self.wpe(starting_sequence_embed.reshape(-1, 1))
 
             audio_inputs_embeds = self.wte(input_ids).squeeze(0)
 
-            position_embeds = self.wpe.get_fixed_embedding(
-                position_ids, input_ids.device
-            ) if not is_first_iteration \
-                else self.wpe(audio_inputs_embeds.reshape(-1, 1))
+            if len(input_ids) == 0:
+                # if we have just starting sequences audio_inputs_embeds is an empty tensor
+                position_embeds = audio_inputs_embeds.clone()
+            else:
+                position_embeds = self.wpe.get_fixed_embedding(
+                    position_ids, input_ids.device
+                ) if not is_profiling_run else self.wpe(input_ids.reshape(-1, 1))
 
             hidden_states = audio_inputs_embeds + position_embeds
 
-            if is_first_iteration or is_logits_only_mode:
-                if isinstance(input_embeds, list):
-                    input_embeds = [input_embed.view(-1, input_embed.shape[-1]) for input_embed in input_embeds]
-
-                    if is_logits_only_mode:
-                        hidden_states = list(hidden_states.split(ids_for_unpacking, dim=0))
-
-                    hidden_states = torch.cat([
-                        tensor for pair in zip(input_embeds, [hidden_states] * len(input_embeds)
-                        if not isinstance(hidden_states, list) else hidden_states)
-                        for tensor in pair
-                    ], dim=0)
-                else:
-                    input_embeds = input_embeds.view(-1, input_embeds.shape[-1])
-                    if input_embeds.shape[0] == attn_metadata.num_prefill_tokens: # this is the profiling run
-                        input_embeds = input_embeds[:-1]
-                    hidden_states = torch.cat([input_embeds, hidden_states], dim=0)
+            if len(starting_sequence_start_ids) > 0:
+                hidden_states = self._insert_conditioning_into_hidden_states(
+                        hidden_states,
+                        input_embeds,
+                        starting_sequence_embed,
+                        starting_sequence_start_ids)
 
             hidden_states = hidden_states.view(-1, self.embed_dim)
-            if hidden_states.shape[0] != (attn_metadata.num_prefill_tokens+attn_metadata.num_decode_tokens):
-                print('Errore')
+
         else:
             assert intermediate_tensors is not None
             hidden_states = intermediate_tensors["hidden_states"]

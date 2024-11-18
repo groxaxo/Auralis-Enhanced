@@ -1,6 +1,5 @@
 import asyncio
 import functools
-import logging
 import uuid
 from contextlib import asynccontextmanager
 
@@ -122,8 +121,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.init_vllm_engine(self.max_concurrency)
 
         # Semaphore for concurrency control of the encoding process
-        self.encoder_semaphore = asyncio.BoundedSemaphore(self.max_concurrency // 15) # empirically find a good value
-        self.decoder_semaphore = asyncio.BoundedSemaphore(self.max_concurrency // 15) # empirically find a good value
+        self.encoder_semaphore = asyncio.BoundedSemaphore(max(1,self.max_concurrency // 15)) # empirically find a good value
+        self.decoder_semaphore = asyncio.BoundedSemaphore(max(1, self.max_concurrency // 15)) # empirically find a good value
         self.eval()
     @property
     def conditioning_config(self) -> ConditioningConfig:
@@ -472,6 +471,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                      (4 if original_token_ids[-1] == self.mel_eos_token_id else 5))
 
         engine_inputs = TokensPrompt(prompt_token_ids=token_ids)
+        conditioning['audio']['sequence_length'] = len(token_ids)
+
         engine_inputs["multi_modal_data"] = conditioning
 
         hidden_states_collector = HiddenStatesCollector()
@@ -508,7 +509,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 )
         start_of_audio_hs = conditioning["audio"]["embeds"].shape[0] # type: ignore
         # Successfully got hidden states
-        return self.final_norm(hidden_states[start_of_audio_hs:-5, ...].unsqueeze(0).to(self.device).to(self.dtype))
+        return self.final_norm(hidden_states[start_of_audio_hs:-4, ...].unsqueeze(0).to(self.device).to(self.dtype))
 
 
 
@@ -548,7 +549,12 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             engine_inputs = TokensPrompt(prompt_token_ids=sequence)
             if gpt_embed_inputs is not None:
                 engine_inputs["multi_modal_data"] = {
-                    "audio": {"embeds": gpt_embed_inputs[seq_index], "is_logits_only_mode": False}}
+                    "audio": {
+                        "embeds": gpt_embed_inputs[seq_index],
+                        "is_logits_only_mode": False,
+                        "sequence_length": len(sequence)
+                    }
+                }
             request_id =f"{request.request_id}_{seq_index}"
             # Get audio token generator from VLLM
             token_generator = self.llm_engine.generate(
@@ -585,7 +591,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                         {
                             "audio": {
                                 'embeds': multimodal_data,  # Use multimodal data for conditioning
-                                "is_logits_only_mode": True
+                                "is_logits_only_mode": True,
+                                "sequence_length": False # to be inserted later
                             },
                         },
                         request_id
@@ -605,7 +612,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                     yield TTSOutput(wav=wav)
 
         except Exception as e:
-            logging.error(f"Error in generator processing: {e}")
+            self.logger.error(f"Error in generator processing: {e}")
             raise # Re-raise the exception
 
     async def shutdown(self):
