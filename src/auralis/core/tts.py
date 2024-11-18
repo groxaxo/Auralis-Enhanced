@@ -9,7 +9,6 @@ from auralis.common.definitions.output import TTSOutput
 from auralis.common.definitions.requests import TTSRequest
 from auralis.common.scheduling.two_phase_scheduler import TwoPhaseScheduler
 from auralis.models.base import BaseAsyncTTSEngine, AudioOutputGenerator
-from auralis.models.registry import MODEL_REGISTRY
 
 
 class TTS:
@@ -49,6 +48,8 @@ class TTS:
 
     def from_pretrained(self, model_name_or_path: str, **kwargs):
         """Load a pretrained model compatible with HF path."""
+        from auralis.models.registry import MODEL_REGISTRY # lazy import to avoid circular imports
+
         try:
             config_path = hf_hub_download(repo_id=model_name_or_path, filename='config.json')
             with open(config_path, 'r') as f:
@@ -111,7 +112,6 @@ class TTS:
                     generator=gen_input['generator'],
                     speaker_embeddings=gen_input['speaker_embedding'],
                     multimodal_data=gen_input['multimodal_data'],
-                    request_id=gen_input['request_id'],
             ):
                 yield chunk
         except Exception as e:
