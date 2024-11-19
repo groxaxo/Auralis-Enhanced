@@ -10,7 +10,6 @@ from auralis.common.definitions.requests import TTSRequest
 from auralis.common.scheduling.two_phase_scheduler import TwoPhaseScheduler
 from auralis.models.base import BaseAsyncTTSEngine, AudioOutputGenerator
 
-
 class TTS:
     def __init__(self, scheduler_max_concurrency: int = 10):
         self.scheduler: Optional[TwoPhaseScheduler] = TwoPhaseScheduler(scheduler_max_concurrency)
@@ -36,13 +35,13 @@ class TTS:
         # some hardcoded values for memory allocation, had been proven to work
         match scheduler_max_concurrency:
             case n if n <= 10:
-                self.max_vllm_memory = 2
-            case n if n <= 20:
                 self.max_vllm_memory = 2.5
-            case n if n <= 30:
+            case n if n <= 20:
                 self.max_vllm_memory = 3
-            case n if n <= 40:
+            case n if n <= 30:
                 self.max_vllm_memory = 3.5
+            case n if n <= 40:
+                self.max_vllm_memory = 4
             case _:
                 self.max_vllm_memory = 6
 
@@ -56,6 +55,8 @@ class TTS:
                 config = json.load(f)
             kwargs['max_vllm_memory'] = self.max_vllm_memory
             kwargs['max_concurrency'] = self.concurrency
+            if 'disable_vllm_logs' not in kwargs:
+                kwargs['disable_vllm_logs'] = False
             self.tts_engine = MODEL_REGISTRY[config['model_type']].from_pretrained(model_name_or_path, **kwargs)
             return self
         except Exception as e:
@@ -112,6 +113,7 @@ class TTS:
                     generator=gen_input['generator'],
                     speaker_embeddings=gen_input['speaker_embedding'],
                     multimodal_data=gen_input['multimodal_data'],
+                    request_id = gen_input['request_id']
             ):
                 yield chunk
         except Exception as e:

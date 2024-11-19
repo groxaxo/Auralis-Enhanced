@@ -11,9 +11,9 @@ from torch import Tensor
 from transformers import GPT2Config
 
 from vllm.attention import AttentionMetadata
-from vllm.config import CacheConfig, MultiModalConfig
+from vllm.config import CacheConfig, MultiModalConfig, VllmConfig
 from vllm.distributed import get_pp_group
-from vllm.inputs import InputContext, INPUT_REGISTRY, DecoderOnlyInputs, token_inputs
+from vllm.inputs import InputContext, INPUT_REGISTRY, DecoderOnlyInputs, token_inputs, DummyData
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.sampler import Sampler, SamplerOutput
@@ -22,12 +22,16 @@ from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from vllm.model_executor.models.gpt2 import GPT2Block
 from vllm.model_executor.models.utils import make_layers, make_empty_intermediate_tensors_factory
 from vllm.model_executor.sampling_metadata import SamplingMetadata
-from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalInputs
+from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalInputs, MultiModalKwargs
+from vllm.multimodal.inputs import PlaceholderRange
+from vllm.multimodal.utils import consecutive_placeholder_ranges
 from vllm.sequence import IntermediateTensors, SequenceData, VLLM_TOKEN_ID_ARRAY_TYPE
 from vllm.model_executor.models.interfaces import SupportsMultiModal, SupportsPP
 
 from typing import Dict, List
 from collections import defaultdict
+
+from vllm.utils import is_list_of
 
 PrefillLength= Union[int, List[int]]
 TokenPosition= Union[int, List[int]]
@@ -218,25 +222,21 @@ def dummy_seq_data_for_xtts(
         ctx: InputContext,
         seq_len: int,
         audio_count: int,
-) -> SequenceData:
+):
     """Create dummy sequence data for XTTS profiling."""
     # Calculate audio token space needed
-    audio_placeholder = array(
-        VLLM_TOKEN_ID_ARRAY_TYPE,
-        [1]
-    ) * 32 # the conditioning perceiver output
+    conditioning_lenght = (32 # the conditioning perceiver output length in the sql (which is fixed)
+                           +
+                           1) # the start audio token
 
-    # Add separator between chunks
-    audio_token_ids = (audio_placeholder + array(VLLM_TOKEN_ID_ARRAY_TYPE, [1])) * audio_count
+    return SequenceData.from_prompt_token_counts(
+        (1, conditioning_lenght * audio_count),
+        (0, seq_len - conditioning_lenght * audio_count)),{
+        "audio":
+            consecutive_placeholder_ranges(num_items=audio_count,
+                                           item_size=conditioning_lenght)
+        }
 
-    # Fill remaining sequence with padding
-    other_token_ids = array(VLLM_TOKEN_ID_ARRAY_TYPE, [1]) * (seq_len - len(audio_token_ids))
-    # not -1 since we add the start audio token
-
-    return SequenceData(
-        audio_token_ids +
-        other_token_ids
-    )
 
 def dummy_conditioning_for_xtts(
         ctx: InputContext,
@@ -261,35 +261,38 @@ def dummy_data_for_xtts(
         ctx: InputContext,
         seq_len: int,
         mm_counts: Mapping[str, int],
-) -> Tuple[SequenceData, dict]:
+):
     """Create complete dummy data for XTTS profiling."""
     audio_count = mm_counts["audio"]
-    seq_data = dummy_seq_data_for_xtts(ctx, seq_len, audio_count)
+    seq_data, ranges = dummy_seq_data_for_xtts(ctx, seq_len, audio_count)
     cond_data = dummy_conditioning_for_xtts(ctx, seq_len, audio_count)
-    return seq_data, cond_data
+    return DummyData(seq_data, cond_data, ranges)
 
 
-def input_mapper_for_xtts(ctx: InputContext, data: Union[Dict, List[Tensor]]) -> MultiModalInputs:
+def input_mapper_for_xtts(ctx: InputContext, data: Union[Dict, List[Tensor]]) -> MultiModalKwargs:
     """Map input data to XTTS format."""
 
-    assert isinstance(data, dict), "XTTS MultiModal input data must be a dictionary with keys: 'embeds', 'is_logits_only_mode'"
+    if not isinstance(data, list):
+        data = [data]
 
-    embeds = data.get("embeds")
-    is_logits_only_mode = data.get("is_logits_only_mode", False)
-    seq_len = data.get("sequence_length", -1)
+    if len(data) == 0:
+        return MultiModalKwargs()
 
-    # Each item should be a torch tensor
-    for audio_input in embeds:
-        if not isinstance(audio_input, Tensor):
-            raise NotImplementedError(f"Unsupported data type: {type(audio_input)}")
+    assert is_list_of(data, dict, check="all"), (f"Expected a list of dictionaries, "
+                                                 f"but got a list of {[type(dat) for dat in data if type(dat) != dict][0]}")
 
-    return MultiModalInputs(
+    embeds = [dat["embeds"] for dat in data]
+    is_logits_only_mode = [dat.get("is_logits_only_mode", False) for dat in data]
+    sequence_length = [dat.get("sequence_length", -1) for dat in data]
+    return MultiModalKwargs(
         {
             "cond_latents": embeds,
             "is_logits_only_mode": is_logits_only_mode,
-            "sequence_length": seq_len,
+            "sequence_length": sequence_length
         }
     )
+
+
 
 
 def input_processor_for_xtts2_gpt(ctx: InputContext, inputs: DecoderOnlyInputs):
@@ -305,6 +308,9 @@ def input_processor_for_xtts2_gpt(ctx: InputContext, inputs: DecoderOnlyInputs):
 
     """
     multi_modal_data = inputs.get("multi_modal_data")
+    if multi_modal_data is None or "audio" not in multi_modal_data:
+        raise ValueError("Missing audio data in multi-modal inputs")
+
     audio_dict = multi_modal_data['audio']
     audio = audio_dict.get('embeds')
 
@@ -313,7 +319,7 @@ def input_processor_for_xtts2_gpt(ctx: InputContext, inputs: DecoderOnlyInputs):
     prompt_token_ids = inputs.get("prompt_token_ids")
 
     if not is_last_decoding_pass:
-        # we fill everything with 0 since we don't actually needs text token ids, it would mess up in the sampling step
+        # we fill everything with 1 since we don't actually needs text token ids, it would mess up in the sampling step
         new_token_ids = ([1] * (audio.shape[0])) + [ctx.model_config.hf_config.start_audio_token] # add the start audio generation token
     else:
         new_token_ids = ([1] * audio.shape[0]) + prompt_token_ids
@@ -322,7 +328,8 @@ def input_processor_for_xtts2_gpt(ctx: InputContext, inputs: DecoderOnlyInputs):
     new_prompt = None
     return token_inputs(prompt_token_ids=new_token_ids,
                  prompt=new_prompt,
-                 multi_modal_data=multi_modal_data)
+                 multi_modal_data=multi_modal_data,
+                 multi_modal_placeholders={'audio':[PlaceholderRange(offset=0, length=len(new_token_ids))]})
 
 
 @MULTIMODAL_REGISTRY.register_input_mapper("audio", input_mapper_for_xtts)
@@ -332,49 +339,50 @@ def input_processor_for_xtts2_gpt(ctx: InputContext, inputs: DecoderOnlyInputs):
 class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
     def __init__( # type: ignore
             self,
-            config: GPT2Config,
-            multimodal_config: MultiModalConfig,
+            vllm_config: VllmConfig,
+            prefix: str,
             cache_config: Optional[CacheConfig] = None,
             quant_config: Optional[QuantizationConfig] = None,
     ):
         super().__init__()
-        self.config = config
+        self.config = vllm_config
+        self.gpt_config = self.config.model_config.hf_config
         self.quant_config = quant_config
 
         self.prefix_sequence_dict: Dict[str, torch.Tensor] = {}
         # Core GPT components
         self.gpt = GPT2Model(
-            config,
+            self.gpt_config,
             cache_config,
             quant_config,
             prefix="gpt"
         )
 
-        self.final_norm =  nn.LayerNorm(config.hidden_size, bias=True, eps=config.layer_norm_epsilon)
+        self.final_norm =  nn.LayerNorm(self.gpt_config.hidden_size, bias=True, eps=self.gpt_config.layer_norm_epsilon)
         # Output head for mel tokens
         self.mel_head = ParallelLMHead(
-            config.num_audio_tokens,
-            config.hidden_size,
+            self.gpt_config.num_audio_tokens,
+            self.gpt_config.hidden_size,
             bias=True,
             quant_config=quant_config,
             prefix="mel_head"
         )
-        self.audio_start_generation_token = config.start_audio_token
+        self.audio_start_generation_token = self.gpt_config.start_audio_token
 
         self.gpt.audio_start_generation_token = self.audio_start_generation_token
 
 
         # Initialize logits processor and sampler
-        logit_scale = getattr(config, "logit_scale", 1.0)
-        self.logits_processor = LogitsProcessor(config.num_audio_tokens,
-                                                config.num_audio_tokens,
+        logit_scale = getattr(self.gpt_config, "logit_scale", 1.0)
+        self.logits_processor = LogitsProcessor(self.gpt_config.num_audio_tokens,
+                                                self.gpt_config.num_audio_tokens,
                                                 logit_scale)
         self.sampler = Sampler()
 
         self.positional_embeddings_correcter = PositionalEmbeddingsCorrecter()
 
     @staticmethod
-    def check_is_logits_only_mode(is_logits_only_mode) -> torch.Tensor:
+    def _check_is_logits_only_mode(is_logits_only_mode) -> torch.Tensor:
 
         # First check if it's a boolean
         if isinstance(is_logits_only_mode, bool):
@@ -462,7 +470,7 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
                 index_2d_expanded = index_2d.T.unsqueeze(1)
 
                 matches = (position_and_id_expanded == index_2d_expanded).all(dim=0)
-                matching_indices = matches.any(dim=0).nonzero().squeeze(1)
+                matching_indices = matches.any(dim=1).nonzero().squeeze(1)
 
                 if not isinstance(conditioning_inputs_list, list) or len(conditioning_inputs_list) < 1:
                     # this is the case where all the tokens are a "second iter" token,
@@ -476,7 +484,7 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
                             len(conditioning_inputs_list) > 0 and
                             idx < len(conditioning_inputs_list)):
                         end_pos = seq_idx + 1
-                        start_pos = self.find_len_of_sequence(non_logit_positions, seq_idx)  # type: ignore
+                        start_pos = self.find_len_of_sequence(positions, seq_idx)  # type: ignore
 
                         # Apply correction only to the relevant part of the sequence
                         positions[start_pos:end_pos] = 1 + positions[start_pos:end_pos] - \
@@ -523,7 +531,7 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
 
         # Pre-calculate all sequence lengths
         sequence_lengths = torch.tensor([
-            cond.shape[0] if isinstance(cond, torch.Tensor) and cond.dim() > 1
+            cond.shape[(0 if cond.dim == 1 else 1)] if isinstance(cond, torch.Tensor) and cond.dim() > 1
             else 0 for cond in conditioning_inputs_list
         ], device=input_ids.device)
 
@@ -550,9 +558,8 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
                 non_logit_mask[start_pos_for_masking:end_pos + cumulative_offset + seq_len[idx]] = False
 
                 # Generate positions for this sequence
-                # noinspection PyTypeChecker
                 new_positions = torch.arange(
-                    1, seq_len[idx], # starting from one since we have the start audio token
+                    1, seq_len[idx].item(), # starting from one since we have the start audio token
                     device=input_ids.device,
                     dtype=positions.dtype
                 )
@@ -576,16 +583,19 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
         non_logit_input_ids = input_ids[non_logit_mask & keep_mask]
         non_logit_positions = positions[non_logit_mask & keep_mask]
 
-        if correct_positions := self._maybe_correct_positions(
-            # if we arrive here it means that we had mixed "second passes" and "logit only mode" in the batch, in debug it hasn't happend yey, but it is kep for a possible edge case
+        correct_positions = self._maybe_correct_positions(
+            # if we arrive here it means that we had mixed "second passes" and "logit only mode" in the batch,
             non_logit_input_ids,
             non_logit_positions,
             conditioning_inputs_list
-        ):
+        )
+        if correct_positions is not None:
             positions[non_logit_mask & keep_mask] = correct_positions
 
         modified_input_ids = input_ids[keep_mask]
         modified_positions = positions[keep_mask]
+        assert (modified_positions < 608).all()
+        assert (modified_positions >= 0).all()
         return starting_indexes, modified_input_ids, modified_positions
 
 
@@ -608,13 +618,13 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
 
         # we work with list conditioning so we convert them to list regardless of vllm batching
         if isinstance(cond_latents, torch.Tensor):
-            if len(cond_latents.shape) > 3:
+            if len(cond_latents.shape) > 4:
                 is_profiling_run = True
             else:
                 # if two equal tensors are passed, vllm aggregate them in a new (batched) tensor
                 cond_latents = list(cond_latents)  # so we unbacth them :) (unless we are in the profiling run)
 
-        is_logits_only_mode = self.check_is_logits_only_mode(is_logits_only_mode)
+        is_logits_only_mode = self._check_is_logits_only_mode(is_logits_only_mode)
 
         #if not is_logits_only_mode:
         starting_sequence_start_ids, input_ids, positions = self._apply_op_to_seq_in_batch(input_ids,
@@ -745,7 +755,12 @@ class GPT2Model(nn.Module):
                                                 insertion_ids: List[int]) -> torch.Tensor:
 
         for idx, conditioning_input in zip(insertion_ids, conditioning_inputs):
-            hidden_states = torch.cat([hidden_states[:idx], conditioning_input, start_of_generation_embed, hidden_states[idx:]], dim=0)
+            hidden_states = torch.cat([
+                hidden_states[:idx],
+                conditioning_input.squeeze(0),
+                start_of_generation_embed,
+                hidden_states[idx:]], dim=0
+            )
 
         return hidden_states
 
@@ -762,7 +777,7 @@ class GPT2Model(nn.Module):
     ) -> Union[torch.Tensor, IntermediateTensors]:
 
         if get_pp_group().is_first_rank:
-
+            starting_sequence_embed = None  # to not have a warning
             if len(starting_sequence_start_ids) > 0:
                 # we have starting sequences, so we just need to get one hs to insert later
                 starting_sequence_embed = self.wte(

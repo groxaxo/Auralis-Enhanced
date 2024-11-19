@@ -59,7 +59,9 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.pp = pipeline_parallel_size
         self.tokenizer = XTTSTokenizerFast.from_pretrained("AstraMindAI/xtts2-gpt")
         self.request_counter = Counter()
-        self.executor = ThreadPoolExecutor(max_workers=10)  # For CPU-bound tasks
+
+        self.max_concurrency = kwargs.get('max_concurrency', 10)
+        self.executor = ThreadPoolExecutor(max_workers=max(1,self.max_concurrency // 15))  # For CPU-bound tasks
 
         self.max_gb_for_vllm_model = max_gb_for_vllm_model
 
@@ -115,15 +117,14 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         # Kept for model loading purposes
         self.text_head = nn.Linear(gpt_config.hidden_size, gpt_config.number_text_tokens, bias=True)
 
-        self.max_concurrency = kwargs.get('max_concurrency', 10)
-
         # Initialize VLLM engine at the end, settings its concurrency
         self.init_vllm_engine(self.max_concurrency, kwargs['disable_vllm_logs'])
 
         # Semaphore for concurrency control of the encoding process
-        self.encoder_semaphore = asyncio.BoundedSemaphore(max(1,self.max_concurrency // 15)) # empirically find a good value
-        self.decoder_semaphore = asyncio.BoundedSemaphore(max(1, self.max_concurrency // 15)) # empirically find a good value
+        self.encoder_semaphore = asyncio.BoundedSemaphore(max(1,self.max_concurrency // 15)) # empirically found a good value
+        self.decoder_semaphore = asyncio.BoundedSemaphore(max(1, self.max_concurrency // 15)) # empirically found a good value
         self.eval()
+
     @property
     def conditioning_config(self) -> ConditioningConfig:
         return ConditioningConfig(
@@ -348,7 +349,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
     @asynccontextmanager
     async def cuda_memory_manager(self):
-        try: # useless since this would de-syncronize the cuda operations
+        try:
             yield
         finally:
             torch.cuda.synchronize()
@@ -510,7 +511,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 )
         start_of_audio_hs = conditioning["audio"]["embeds"].shape[0] # type: ignore
         # Successfully got hidden states
-        return self.final_norm(hidden_states[start_of_audio_hs:-4, ...].unsqueeze(0).to(self.device).to(self.dtype))
+        return self.final_norm(hidden_states[start_of_audio_hs:-5, ...].unsqueeze(0).to(self.device).to(self.dtype))
 
 
 
