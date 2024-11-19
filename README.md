@@ -120,6 +120,14 @@ Some of them are:
 - preview(): Smart play method that tries display() first, then falls back to play()
 ```
 
+### ⚠️ Error
+
+If you ever recieve the error `ValueError: Counters can only be incremented by non-negative amounts.` try instantiating the TTS class like this:
+```python
+tts.from_pretrained('AstraMindAI/xtts2-gpt',disable_vllm_logs=True)
+```
+This is a [known bug](https://github.com/vllm-project/vllm/pull/10430) that will likely be fixed in next the next vllm version
+
 ### Adding Your Own Models
 
 Feeling adventurous? You can add your own models to Auralis. Check out [ADDING_MODELS.md](docs/ADDING_MODELS.md) for a step-by-step guide.
