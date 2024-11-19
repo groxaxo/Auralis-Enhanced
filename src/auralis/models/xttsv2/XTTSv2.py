@@ -118,7 +118,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.max_concurrency = kwargs.get('max_concurrency', 10)
 
         # Initialize VLLM engine at the end, settings its concurrency
-        self.init_vllm_engine(self.max_concurrency)
+        self.init_vllm_engine(self.max_concurrency, kwargs['disable_vllm_logs'])
 
         # Semaphore for concurrency control of the encoding process
         self.encoder_semaphore = asyncio.BoundedSemaphore(max(1,self.max_concurrency // 15)) # empirically find a good value
@@ -149,7 +149,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             args = tuple(args)
         return super().to(*args, **kwargs)
 
-    def init_vllm_engine(self, concurrency):
+    def init_vllm_engine(self, concurrency, disable_vllm_logs):
         """Initialize models with AsyncVLLMEngine."""
         max_seq_num = concurrency
         engine_args = AsyncEngineArgs(
@@ -163,7 +163,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             gpu_memory_utilization=self.get_memory_percentage(self.max_gb_for_vllm_model * 1024 ** 3),
             trust_remote_code=True,
             enforce_eager=True,
-            limit_mm_per_prompt={"audio": 1},
+            limit_mm_per_prompt={"audio": 1}, # even if more audio are present, they'll be condendesed into one
+            disable_log_stats=disable_vllm_logs,
             max_num_seqs=max_seq_num,
             max_num_batched_tokens=(self.gpt_config.max_text_tokens +
                                     self.gpt_config.max_audio_tokens +

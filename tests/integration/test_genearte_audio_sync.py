@@ -44,7 +44,7 @@ tts = TTS()
 tts.tts_engine = XTTSv2Engine.from_pretrained("AstraMindAI/xtts2", torch_dtype=torch.float32)
 
 def test_tts_sync_generator():
-    # Crea le richieste TTS
+    # Create a TTS request
     request_for_generator = TTSRequest(
         text=text,
         language="it",
@@ -65,7 +65,7 @@ def test_tts_sync_generator():
 
 
 def test_tts_generation():
-    # Crea le richieste TTS
+    # Create a TTS request
     request_for_generator = TTSRequest(
         text=text,
         language="it",

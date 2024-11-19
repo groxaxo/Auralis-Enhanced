@@ -1,5 +1,17 @@
 from setuptools import setup, find_packages
+import sys
+import platform
 
+def check_platform():
+    if sys.platform != 'linux' and sys.platform != 'linux2':
+        raise RuntimeError(
+            f"""
+            Following vllm requirements are not met:
+            Current platform: {platform.system()} but only linux platforms are supported.
+            """
+        )
+
+check_platform()
 setup(
     name='auralis',
     version='0.1.0',
