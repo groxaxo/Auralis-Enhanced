@@ -1,5 +1,6 @@
 import asyncio
 import functools
+import time
 import uuid
 from contextlib import asynccontextmanager
 
@@ -61,7 +62,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.request_counter = Counter()
 
         self.max_concurrency = kwargs.get('max_concurrency', 10)
-        self.executor = ThreadPoolExecutor(max_workers=max(1,self.max_concurrency // 15))  # For CPU-bound tasks
+        semaphore_concurrency = max(1, self.max_concurrency // 6)  # empirically found a good value
+        self.executor = ThreadPoolExecutor(max_workers=semaphore_concurrency)  # For CPU-bound tasks
 
         self.max_gb_for_vllm_model = max_gb_for_vllm_model
 
@@ -121,8 +123,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.init_vllm_engine(self.max_concurrency)
 
         # Semaphore for concurrency control of the encoding process
-        self.encoder_semaphore = asyncio.BoundedSemaphore(max(1,self.max_concurrency // 15)) # empirically found a good value
-        self.decoder_semaphore = asyncio.BoundedSemaphore(max(1, self.max_concurrency // 15)) # empirically found a good value
+        self.encoder_semaphore = asyncio.BoundedSemaphore(semaphore_concurrency) # empirically found a good value
+        self.decoder_semaphore = asyncio.BoundedSemaphore(semaphore_concurrency) # empirically found a good value
         self.eval()
 
     @property
@@ -166,6 +168,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             enforce_eager=True,
             limit_mm_per_prompt={"audio": 1}, # even if more audio are present, they'll be condendesed into one
             max_num_seqs=max_seq_num,
+            disable_log_stats=True, # temporary fix for the log stats, there is a known bug in vllm that will be fixed in the next relaese
             max_num_batched_tokens=(self.gpt_config.max_text_tokens +
                                     self.gpt_config.max_audio_tokens +
                                     32 + 5 + 3) * max_seq_num,
@@ -610,9 +613,11 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                             ).cpu().detach().numpy().squeeze()
                         ) # noqa
 
-                #accumulated_content = []
                 # yield the audio output
-                yield TTSOutput(wav=wav)
+                yield TTSOutput(array= wav,
+                                start_time = request.start_time,
+                                token_length = len(output.outputs[0].token_ids)
+                                )
 
 
 async def shutdown(self):

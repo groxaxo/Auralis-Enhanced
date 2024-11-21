@@ -95,6 +95,7 @@ class TTSRequest:
 
     speaker_files: Union[List[str], bytes]  # Path to the speaker audio file
 
+    start_time: Optional[float] = None
     enhance_speech: bool = True
     audio_config: AudioPreprocessingConfig = field(default_factory=AudioPreprocessingConfig)
     language: SupportedLanguages = "auto"

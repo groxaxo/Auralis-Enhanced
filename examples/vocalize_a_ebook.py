@@ -92,7 +92,7 @@ def main():
     speaker_file = '/home/marco/Musica/paolo_pierobon_1.wav'
     # Initialize the engine, you can experiment with the scheduler_max_concurrency parameter to optimize the performance
     tts = TTS(
-        scheduler_max_concurrency=18).from_pretrained("AstraMindAI/xttsv2", torch_dtype=torch.float32)
+        scheduler_max_concurrency=36).from_pretrained("AstraMindAI/xttsv2", torch_dtype=torch.float32)
     req = TTSRequest(
             text=text,
             language="it",
@@ -110,11 +110,10 @@ def main():
     for out in result_generator:
         out_list.append(out)
         # Play the audio
-        out.play()
     print(f"Execution time: {time.time() - start_time:.2f} seconds")
 
     # Save the audio to a file
-    TTSOutput.combine_outputs(out_list).save("yourbook.wav")
+    TTSOutput.combine_outputs(out_list).save("A_volte_ritorno.wav")
 
 
 

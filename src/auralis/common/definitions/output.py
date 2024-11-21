@@ -15,8 +15,11 @@ import torchaudio
 @dataclass
 class TTSOutput:
     """Container for TTS inference output with integrated audio utilities"""
-    wav: np.ndarray
+    array: np.ndarray
     sample_rate: int = 24000
+    start_time: Optional[float] = None
+    end_time: Optional[float] = None
+    token_length: Optional[int] = None
 
     def change_speed(self, speed_factor: float) -> 'TTSOutput':
         """
@@ -52,7 +55,7 @@ class TTSOutput:
             return self
 
         # Ensure float32
-        wav = self.wav.astype(np.float32) if self.wav.dtype != np.float32 else self.wav
+        wav = self.array.astype(np.float32) if self.array.dtype != np.float32 else self.array
 
         # Parameters for STFT
         n_fft = 2048
@@ -79,7 +82,7 @@ class TTSOutput:
         modified = librosa.util.normalize(modified, norm=np.inf)
 
         return TTSOutput(
-            wav=modified,
+            array=modified,
             sample_rate=self.sample_rate
         )
 
@@ -94,19 +97,19 @@ class TTSOutput:
             New TTSOutput instance with concatenated audio
         """
         # Concatenate audio
-        combined_audio = np.concatenate([out.wav for out in outputs])
+        combined_audio = np.concatenate([out.array for out in outputs])
 
         # Use sample rate of first output
         return TTSOutput(
-            wav=combined_audio,
+            array=combined_audio,
             sample_rate=outputs[0].sample_rate
         )
 
     def to_tensor(self) -> Union[torch.Tensor, np.ndarray]:
         """Convert numpy array to torch tensor"""
-        if isinstance(self.wav, np.ndarray):
-            return torch.from_numpy(self.wav)
-        return self.wav
+        if isinstance(self.array, np.ndarray):
+            return torch.from_numpy(self.array)
+        return self.array
 
     def to_bytes(self, format: str = 'wav', sample_width: int = 2) -> bytes:
         """Convert audio to bytes format.
@@ -206,7 +209,7 @@ class TTSOutput:
         )
 
         return TTSOutput(
-            wav=resampled.squeeze().numpy(),
+            array=resampled.squeeze().numpy(),
             sample_rate=new_sample_rate
         )
 
@@ -216,7 +219,7 @@ class TTSOutput:
         Returns:
             Tuple of (number of samples, sample rate, duration in seconds)
         """
-        n_samples = len(self.wav)
+        n_samples = len(self.array)
         duration = n_samples / self.sample_rate
         return n_samples, self.sample_rate, duration
 
@@ -232,7 +235,7 @@ class TTSOutput:
             New TTSOutput instance
         """
         return cls(
-            wav=tensor.squeeze().cpu().numpy(),
+            array=tensor.squeeze().cpu().numpy(),
             sample_rate=sample_rate
         )
 
@@ -253,10 +256,10 @@ class TTSOutput:
         """Play the audio through the default sound device.
         For use in regular Python scripts/applications."""
         # Ensure the audio is in the correct format
-        if isinstance(self.wav, torch.Tensor):
-            audio_data = self.wav.cpu().numpy()
+        if isinstance(self.array, torch.Tensor):
+            audio_data = self.array.cpu().numpy()
         else:
-            audio_data = self.wav
+            audio_data = self.array
 
         # Ensure float32 and normalize
         if audio_data.dtype != np.float32:

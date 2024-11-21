@@ -74,4 +74,4 @@ def test_tts_generation():
     )
     audio = tts.generate_speech(request_for_generator)
 
-    assert len(audio.wav)>0
+    assert len(audio.array) > 0

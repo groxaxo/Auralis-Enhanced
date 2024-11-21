@@ -385,7 +385,7 @@ request = TTSRequest(
 ```python
 @dataclass
 class TTSOutput:
-    audio: np.ndarray
+    array: np.ndarray
     sample_rate: int
 ```
 

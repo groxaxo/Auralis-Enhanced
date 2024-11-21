@@ -3,6 +3,7 @@ import json
 import queue
 import threading
 import time
+import uuid
 from typing import AsyncGenerator, Optional, Dict, Union, Generator, List
 from huggingface_hub import hf_hub_download
 from torch.onnx.symbolic_opset11 import chunk
@@ -10,8 +11,11 @@ from torch.onnx.symbolic_opset11 import chunk
 from auralis.common.logging.logger import setup_logger
 from auralis.common.definitions.output import TTSOutput
 from auralis.common.definitions.requests import TTSRequest
+from auralis.common.metrics.performance import track_generation
 from auralis.common.scheduling.two_phase_scheduler import TwoPhaseScheduler
 from auralis.models.base import BaseAsyncTTSEngine, AudioOutputGenerator
+
+
 
 class TTS:
     def __init__(self, scheduler_max_concurrency: int = 10):
@@ -71,6 +75,7 @@ class TTS:
                                           ):
         """Prepare the generation context for the first phase."""
         conditioning_config = self.tts_engine.conditioning_config
+        input_request.start_time = time.time()
         audio_token_generators, speaker_embeddings, gpt_like_decoder_conditioning = None, None, None
 
         if conditioning_config.speaker_embeddings and conditioning_config.gpt_like_decoder_conditioning:
@@ -122,6 +127,7 @@ class TTS:
         except Exception as e:
             raise e
 
+    @track_generation
     async def _second_phase_fn(self, gen_input: Dict) -> AudioOutputGenerator:
         """Second phase: Generate speech using the existing TTS engine."""
         async for chunk in self._process_single_generator(gen_input):
@@ -163,7 +169,7 @@ class TTS:
                        for i in range(0, len(request.text), max_length)]
 
         return [
-            (copy := request.copy(), setattr(copy, 'text', chunk))[0]
+            (copy := request.copy(), setattr(copy, 'text', chunk), setattr(copy, 'request_id', uuid.uuid4().hex))[0]
             for chunk in text_chunks
         ]
 
