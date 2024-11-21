@@ -1,6 +1,6 @@
 from auralis import TTS, TTSRequest
 
-tts = TTS(scheduler_max_concurrency=12).from_pretrained("AstraMindAI/xttsv2", device='cuda:1')
+tts = TTS(scheduler_max_concurrency=12).from_pretrained("AstraMindAI/xttsv2")
 
 request = TTSRequest(
     text="愛しい彼女へ "
@@ -10,8 +10,7 @@ request = TTSRequest(
          "いつも一緒にいてくれて、"
          "ありがとう。"
          "愛を込めて",
-    language="ja",
-    speaker_files=["/home/marco/Musica/marco_speaking.ogg"],
+    speaker_files=["your_voice.ogg"],
 )
 
 output = tts.generate_speech(request)
