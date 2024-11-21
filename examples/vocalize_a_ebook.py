@@ -87,15 +87,15 @@ def process_multiple_epubs(input_folder, output_folder):
                 print(f"Error processing {filename}: {str(e)}")
 
 def main():
-    text = extract_text_from_epub("/home/marco/Documenti/A volte ritorno (John Niven) (Z-Library).epub")
+    text = extract_text_from_epub("yourbook.epub")
 
-    speaker_file = '/home/marco/Musica/paolo_pierobon_1.wav'
+    speaker_file = '../tests/resources/audio_samples/female.wav'
     # Initialize the engine, you can experiment with the scheduler_max_concurrency parameter to optimize the performance
     tts = TTS(
-        scheduler_max_concurrency=36).from_pretrained("AstraMindAI/xttsv2", torch_dtype=torch.float32)
+        scheduler_max_concurrency=36).from_pretrained("AstraMindAI/xttsv2")
     req = TTSRequest(
             text=text,
-            language="it",
+            language="auto",
             temperature=0.75,
             repetition_penalty=6.5,
             speaker_files=[speaker_file],
@@ -113,7 +113,7 @@ def main():
     print(f"Execution time: {time.time() - start_time:.2f} seconds")
 
     # Save the audio to a file
-    TTSOutput.combine_outputs(out_list).save("A_volte_ritorno.wav")
+    TTSOutput.combine_outputs(out_list).save("your_book.wav")
 
 
 

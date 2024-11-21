@@ -13,7 +13,7 @@ T = TypeVar('T')
 class TTSMetricsTracker:
     window_start: float = field(default_factory=time.time)
     last_log_time: float = field(default_factory=time.time)
-    log_interval: float = 5.0  # secondi tra i log
+    log_interval: float = 5.0  # sec between logs
 
     window_tokens: int = 0
     window_audio_seconds: float = 0
@@ -37,7 +37,7 @@ class TTSMetricsTracker:
     def reset_window(self) -> None:
         current_time = time.time()
         self.last_log_time = current_time
-        # Resetta la finestra
+        # reset window
         self.window_start = current_time
         self.window_tokens = 0
         self.window_audio_seconds = 0
