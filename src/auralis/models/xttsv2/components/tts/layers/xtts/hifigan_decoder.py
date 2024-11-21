@@ -485,7 +485,7 @@ class ResNetSpeakerEncoder(nn.Module):
             x = self.torch_spec(x)
 
         if self.log_input:
-            x = x.clamp(min=1e-6).log()
+            x.add_(1e-6).log_()
         x = self.instancenorm(x).unsqueeze(1)
 
         x = self.conv1(x)

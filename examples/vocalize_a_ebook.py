@@ -58,7 +58,7 @@ def extract_text_from_epub(epub_path, output_path=None):
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(full_text)
 
-    return full_text
+    return full_text .replace('»', '"').replace('«', '"')
 
 
 def process_multiple_epubs(input_folder, output_folder):
@@ -87,27 +87,35 @@ def process_multiple_epubs(input_folder, output_folder):
                 print(f"Error processing {filename}: {str(e)}")
 
 def main():
-    text = extract_text_from_epub("yourbook.epub")
+    text = extract_text_from_epub("/home/marco/Documenti/A volte ritorno (John Niven) (Z-Library).epub")
 
-    speaker_file = "../tests/resources/female.wav"
+    speaker_file = '/home/marco/Musica/paolo_pierobon_1.wav'
     # Initialize the engine, you can experiment with the scheduler_max_concurrency parameter to optimize the performance
-    tts = TTS(scheduler_max_concurrency=12).from_pretrained("AstraMindAI/xttsv2", torch_dtype=torch.float32)
+    tts = TTS(
+        scheduler_max_concurrency=18).from_pretrained("AstraMindAI/xttsv2", torch_dtype=torch.float32)
     req = TTSRequest(
             text=text,
-            language="en",
+            language="it",
+            temperature=0.75,
+            repetition_penalty=6.5,
             speaker_files=[speaker_file],
-            stream=False
+            stream=True
         )
 
     start_time = time.time()
 
-    # Execute parallel requests
-    results = tts.generate_speech(req)
-
+    # Execute requests in a generator to get audio instantly
+    result_generator = tts.generate_speech(req)
+    out_list = []
+    for out in result_generator:
+        out_list.append(out)
+        # Play the audio
+        out.play()
     print(f"Execution time: {time.time() - start_time:.2f} seconds")
 
     # Save the audio to a file
-    results.save_audio("yourbook.wav")
+    TTSOutput.combine_outputs(out_list).save("yourbook.wav")
+
 
 
 if __name__ == "__main__":

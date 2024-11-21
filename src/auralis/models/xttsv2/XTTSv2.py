@@ -91,15 +91,15 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         )
 
         self.conditioning_perceiver = PerceiverResampler(
-                dim=gpt_config.hidden_size,
-                depth=2,
-                dim_context=gpt_config.hidden_size,
-                num_latents=32,
-                dim_head=64,
-                heads=8,
-                ff_mult=4,
-                use_flash_attn=False,
-            )
+            dim=gpt_config.hidden_size,
+            depth=2,
+            dim_context=gpt_config.hidden_size,
+            num_latents=32,
+            dim_head=64,
+            heads=8,
+            ff_mult=4,
+            use_flash_attn=False,
+        )
 
         # Initialize HiFi-GAN decoder
         self.hifigan_decoder = HifiDecoder(
@@ -159,8 +159,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             pipeline_parallel_size=self.pp,
             dtype="auto",
             max_model_len=self.gpt_config.max_text_tokens +
-                           self.gpt_config.max_audio_tokens +
-                           32 + 5 + 3, # this is from the xttsv2 code, 32 is the conditioning sql
+                          self.gpt_config.max_audio_tokens +
+                          32 + 5 + 3, # this is from the xttsv2 code, 32 is the conditioning sql
             gpu_memory_utilization=self.get_memory_percentage(self.max_gb_for_vllm_model * 1024 ** 3),
             trust_remote_code=True,
             enforce_eager=True,
@@ -466,11 +466,11 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             request_id: Unique request ID
         """
         request_id = f"{request_id}_logits"
-        original_token_ids = token_ids.copy()
+
 
         # Reset token_ids on each attempt
-        token_ids = ([self.mel_bos_token_id] + list(original_token_ids) + [self.mel_eos_token_id] *
-                     (4 if original_token_ids[-1] == self.mel_eos_token_id else 5))
+        token_ids = ([self.mel_bos_token_id] + list(token_ids) + [self.mel_eos_token_id] * 4)
+        # we need 5 eos tokens
 
         engine_inputs = TokensPrompt(prompt_token_ids=token_ids)
         conditioning['audio']['sequence_length'] = len(token_ids)
@@ -506,9 +506,9 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
         if hidden_states is None:
             raise RuntimeError(
-                    f"No hidden states collected for request {request_id}. "
-                    f"This should never happen! Please report this issue on GitHub."
-                )
+                f"No hidden states collected for request {request_id}. "
+                f"This should never happen! Please report this issue on GitHub."
+            )
         start_of_audio_hs = conditioning["audio"]["embeds"].shape[0] # type: ignore
         # Successfully got hidden states
         return self.final_norm(hidden_states[start_of_audio_hs:-5, ...].unsqueeze(0).to(self.device).to(self.dtype))
@@ -571,11 +571,11 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
     @torch.inference_mode()
     async def process_tokens_to_speech(
-        self,
-        generator: AsyncGenerator[RequestOutput, None],
-        speaker_embeddings: Optional[torch.Tensor] = None,
-        multimodal_data: Optional[torch.Tensor] = None,
-        request_id: Optional[str] = None,
+            self,
+            generator: AsyncGenerator[RequestOutput, None],
+            speaker_embeddings: Optional[torch.Tensor] = None,
+            multimodal_data: Optional[torch.Tensor] = None,
+            request_id: Optional[str] = None,
     ) -> AsyncGenerator[TTSOutput, None]:
         """
         Process a single token generator and emit results.
@@ -584,39 +584,35 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         assert speaker_embeddings is not None, "Speaker embeddings must be provided for speech generation with XTTSv2."
         assert multimodal_data is not None, "Multimodal data must be provided for speech generation with XTTSv2."
 
-        try:
-            async for output in generator:
-                if output.finished:
-                    # get the hidden states
-                    hidden_states = await self.get_model_logits(
-                        list(output.outputs[0].token_ids),
-                        {
-                            "audio": {
-                                'embeds': multimodal_data,  # Use multimodal data for conditioning
-                                "is_logits_only_mode": True,
-                                "sequence_length": False # to be inserted later
-                            },
+        async for output in generator:
+            if output.finished:
+                # get the hidden states
+                hidden_states = await self.get_model_logits(
+                    list(output.outputs[0].token_ids),
+                    {
+                        "audio": {
+                            'embeds': multimodal_data,  # Use multimodal data for conditioning
+                            "is_logits_only_mode": True,
+                            "sequence_length": False # to be inserted later
                         },
-                        request_id
-                    )
+                    },
+                    request_id
+                )
 
-                    async with self.decoder_semaphore:
-                        async with self.cuda_memory_manager():
-                            wav = await asyncio.get_event_loop().run_in_executor(
-                                self.executor,
-                                lambda: self.hifigan_decoder(
-                                    hidden_states,
-                                    g=speaker_embeddings
-                                ).cpu().detach().numpy().squeeze()
-                            ) # noqa
+                async with self.decoder_semaphore:
+                    async with self.cuda_memory_manager():
+                        wav = await asyncio.get_event_loop().run_in_executor(
+                            self.executor,
+                            lambda: self.hifigan_decoder(
+                                hidden_states,
+                                g=speaker_embeddings
+                            ).cpu().detach().numpy().squeeze()
+                        ) # noqa
 
-                    # yield the audio output
-                    yield TTSOutput(wav=wav)
+                # yield the audio output
+                yield TTSOutput(wav=wav)
 
-        except Exception as e:
-            self.logger.error(f"Error in generator processing: {e}")
-            raise # Re-raise the exception
 
-    async def shutdown(self):
-        self.llm_engine.shutdown_background_loop()
+async def shutdown(self):
+    self.llm_engine.shutdown_background_loop()
 

@@ -18,6 +18,71 @@ class TTSOutput:
     wav: np.ndarray
     sample_rate: int = 24000
 
+    def change_speed(self, speed_factor: float) -> 'TTSOutput':
+        """
+        Change audio speed while preserving quality and minimizing distortion.
+        Uses phase vocoder for better quality at extreme speed changes.
+
+        Args:
+            speed_factor (float): Speed modification factor:
+                                 > 1.0: speeds up (e.g. 1.2 = 20% faster)
+                                 < 1.0: slows down (e.g. 0.8 = 20% slower)
+                                 = 1.0: no change
+
+        Returns:
+            TTSOutput: New instance with speed-modified audio
+
+        Example:
+            # Speed up 20%
+            faster = audio.change_speed(1.2)
+
+            # Slow down 20%
+            slower = audio.change_speed(0.8)
+
+        Raises:
+            ValueError: If speed_factor is <= 0
+        """
+        import librosa
+
+        # Validate input
+        if speed_factor <= 0:
+            raise ValueError("Speed factor must be positive")
+
+        if speed_factor == 1.0:
+            return self
+
+        # Ensure float32
+        wav = self.wav.astype(np.float32) if self.wav.dtype != np.float32 else self.wav
+
+        # Parameters for STFT
+        n_fft = 2048
+        hop_length = 512
+
+        # Compute STFT
+        D = librosa.stft(wav, n_fft=n_fft, hop_length=hop_length)
+
+        # Time-stretch using phase vocoder
+        modified_stft = librosa.phase_vocoder(
+            D,
+            rate=speed_factor,
+            hop_length=hop_length
+        )
+
+        # Inverse STFT
+        modified = librosa.istft(
+            modified_stft,
+            hop_length=hop_length,
+            length=len(wav)
+        )
+
+        # Normalize to prevent clipping
+        modified = librosa.util.normalize(modified, norm=np.inf)
+
+        return TTSOutput(
+            wav=modified,
+            sample_rate=self.sample_rate
+        )
+
     @staticmethod
     def combine_outputs(outputs: List['TTSOutput']) -> 'TTSOutput':
         """Combine multiple TTSOutput instances into a single instance.
@@ -199,7 +264,7 @@ class TTSOutput:
         audio_data = np.clip(audio_data, -1.0, 1.0)
 
         # Play the audio
-        sd.play(audio_data, self.sample_rate)
+        sd.play(audio_data, self.sample_rate, blocksize=2048)
         sd.wait()  # Wait until the audio is finished playing
 
     def display(self) -> Optional[Audio]:

@@ -7,8 +7,10 @@ import torch
 import torch.nn as nn
 from typing import Optional, Union, Iterable, Tuple, Mapping
 
+from networkx.algorithms.clique import enumerate_all_cliques
 from torch import Tensor
 from transformers import GPT2Config
+from triton.language import dtype
 
 from vllm.attention import AttentionMetadata
 from vllm.config import CacheConfig, MultiModalConfig, VllmConfig
@@ -48,7 +50,7 @@ class TokenPositionAndPrefillTuple:
                 pos_id: Optional[TokenPosition] = None,
                 token_id: Optional[TokenId] = None):
         if prefill_len is not None:
-           self.prefill_len=prefill_len
+            self.prefill_len=prefill_len
         if pos_id is not None:
             self.pos_id=pos_id
         if token_id is not None:
@@ -198,7 +200,7 @@ class LearnedPositionEmbeddings(nn.Module):
             Position embeddings tensor matching input shape plus embedding dimension
             Shape: [batch_size, seq_len, model_dim] or [1, 1, model_dim]
         """
-        # Validation degli indici
+        # Validation of indices to prevent unknown errors
         assert (ind < self.seq_len).all(), \
             f"Position indices out of range. Found max={ind.max().item()}, but maximum allowed is {self.seq_len-1}"
         assert (ind >= 0).all(), \
@@ -235,7 +237,7 @@ def dummy_seq_data_for_xtts(
         "audio":
             consecutive_placeholder_ranges(num_items=audio_count,
                                            item_size=conditioning_lenght)
-        }
+    }
 
 
 def dummy_conditioning_for_xtts(
@@ -247,10 +249,10 @@ def dummy_conditioning_for_xtts(
     return {
         "audio": {
             "embeds":[
-            torch.zeros(
-                (seq_len, ctx.model_config.hf_config.hidden_size),
-                dtype=ctx.model_config.dtype) for _ in range(audio_count)
-        ],
+                torch.zeros(
+                    (seq_len, ctx.model_config.hf_config.hidden_size),
+                    dtype=ctx.model_config.dtype) for _ in range(audio_count)
+            ],
             "is_logits_only_mode": False,
             "sequence_length": -1,
         }
@@ -327,9 +329,9 @@ def input_processor_for_xtts2_gpt(ctx: InputContext, inputs: DecoderOnlyInputs):
     # account for the new token that will be added before generation
     new_prompt = None
     return token_inputs(prompt_token_ids=new_token_ids,
-                 prompt=new_prompt,
-                 multi_modal_data=multi_modal_data,
-                 multi_modal_placeholders={'audio':[PlaceholderRange(offset=0, length=len(new_token_ids))]})
+                        prompt=new_prompt,
+                        multi_modal_data=multi_modal_data,
+                        multi_modal_placeholders={'audio':[PlaceholderRange(offset=0, length=len(new_token_ids))]})
 
 
 @MULTIMODAL_REGISTRY.register_input_mapper("audio", input_mapper_for_xtts)
@@ -445,66 +447,68 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
         return last_jumps
 
     def _maybe_correct_positions(self,
-                                     input_ids: torch.Tensor,
-                                     positions: torch.Tensor,
-                                     conditioning_inputs_list: List[torch.Tensor]):
-            correct_positions_ids = self.positional_embeddings_correcter.get_by_next_token(input_ids.tolist(),
-                                                                                           positions.tolist())
-            if len(correct_positions_ids) > 0:
-                position_and_id_tensor = torch.cat(
-                    [positions.unsqueeze(0), input_ids.unsqueeze(0)],
-                    dim=0
-                )
+                                 input_ids: torch.Tensor,
+                                 positions: torch.Tensor,
+                                 conditioning_inputs_list: List[torch.Tensor]):
+        correct_positions_ids = self.positional_embeddings_correcter.get_by_next_token(input_ids.tolist(),
+                                                                                       positions.tolist())
+        if len(correct_positions_ids) > 0:
+            position_and_id_tensor = torch.cat(
+                [positions.unsqueeze(0), input_ids.unsqueeze(0)],
+                dim=0
+            )
 
-                index_2d = torch.tensor(
-                    [(correct_positions_id.pos_id, correct_positions_id.token_id) for
-                     correct_positions_id in correct_positions_ids],
-                    device=positions.device
-                )
+            index_2d = torch.tensor(
+                [(correct_positions_id.pos_id, correct_positions_id.token_id) for
+                 correct_positions_id in correct_positions_ids],
+                device=positions.device
+            )
 
-                prefill_len_token = torch.tensor(
-                    [correct_positions_id.prefill_len for correct_positions_id in correct_positions_ids],
-                    device=positions.device)
+            prefill_len_token = torch.tensor(
+                [correct_positions_id.prefill_len for correct_positions_id in correct_positions_ids],
+                device=positions.device)
 
-                position_and_id_expanded = position_and_id_tensor.unsqueeze(-1)
-                index_2d_expanded = index_2d.T.unsqueeze(1)
+            position_and_id_expanded = position_and_id_tensor.unsqueeze(-1)
+            index_2d_expanded = index_2d.T.unsqueeze(1)
 
-                matches = (position_and_id_expanded == index_2d_expanded).all(dim=0)
-                matching_indices = matches.any(dim=1).nonzero().squeeze(1)
+            matches = (position_and_id_expanded == index_2d_expanded).all(dim=0)
+            matching_indices = matches.any(dim=1).nonzero().squeeze(1)
 
-                if not isinstance(conditioning_inputs_list, list) or len(conditioning_inputs_list) < 1:
-                    # this is the case where all the tokens are a "second iter" token,
-                    # so we don't have mixed stages in the batch
-                    return 1 + positions - prefill_len_token
-                # Iterate through all matching indices
-                for idx, seq_idx in enumerate(matching_indices):
+            if not isinstance(conditioning_inputs_list, list) or len(conditioning_inputs_list) < 1:
+                # this is the case where all the tokens are a "second iter" token,
+                # so we don't have mixed stages in the batch
+                return 1 + positions - prefill_len_token
+            # Iterate through all matching indices
+            for idx, seq_idx in enumerate(matching_indices):
 
-                    # Ensure we have corresponding conditioning input
-                    if (isinstance(conditioning_inputs_list, list) and
-                            len(conditioning_inputs_list) > 0 and
-                            idx < len(conditioning_inputs_list)):
-                        end_pos = seq_idx + 1
-                        start_pos = self.find_len_of_sequence(positions, seq_idx)  # type: ignore
+                # Ensure we have corresponding conditioning input
+                if (isinstance(conditioning_inputs_list, list) and
+                        len(conditioning_inputs_list) > 0 and
+                        idx < len(conditioning_inputs_list)):
+                    end_pos = seq_idx + 1
+                    start_pos = self.find_len_of_sequence(positions, seq_idx)  # type: ignore
 
-                        # Apply correction only to the relevant part of the sequence
-                        positions[start_pos:end_pos] = 1 + positions[start_pos:end_pos] - \
-                                                                 correct_positions_ids[
-                                                                     idx].prefill_len
+                    # Apply correction only to the relevant part of the sequence
+                    positions[start_pos:end_pos] = 1 + positions[start_pos:end_pos] - \
+                                                   correct_positions_ids[
+                                                       idx].prefill_len
 
-                return positions
+            return positions
 
     def _apply_op_to_seq_in_batch(self,
-                                     input_ids: torch.Tensor,
-                                     positions: torch.Tensor,
-                                     conditioning_inputs_list: List[torch.Tensor],
-                                     is_logit_only_mode: torch.Tensor,
-                                     seq_len: Union[torch.Tensor],
-                                     is_profiling_run: bool = False
-                                     ) -> Tuple[List[int], torch.Tensor, torch.Tensor]:
+                                  input_ids: torch.Tensor,
+                                  positions: torch.Tensor,
+                                  conditioning_inputs_list: List[torch.Tensor],
+                                  is_logit_only_mode: torch.Tensor,
+                                  seq_len: Union[torch.Tensor],
+                                  is_profiling_run: bool = False
+                                  ) -> Tuple[List[int], torch.Tensor, torch.Tensor]:
         """
         Apply different ops to the tensors sequence in the batch
         Returns:
             - List of starting indexes
+            - A tensor for the logit only mode
+            - A mask to reinsert the tokens in the correct position for the logit only mode
             - Modified input IDs
             - Modified positions
         """
@@ -550,23 +554,29 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
             # Store original starting index
             starting_indexes.append(start_pos_for_masking)
 
-            # Update masks
-            keep_mask[start_pos_for_masking:end_pos + cumulative_offset + 1] = False
-
             if is_logit_only_mode[idx]:
-                # Mark range for logit-only mode
-                non_logit_mask[start_pos_for_masking:end_pos + cumulative_offset + seq_len[idx]] = False
+                # here the logic is a bit messy:
+                # in the og implementation, the treats the embedding for the star tof generation token differently.
+                # during the autoregressive token generation phase they use the token embeddings of the start
+                # of generation token as input for the position embeddings, but in the logit only mode they use the
+                # position id of the start of generation token as input for the position embeddings
 
+                non_logit_mask[start_pos_for_masking : end_pos + cumulative_offset + seq_len[idx]] = False
+                keep_mask[start_pos_for_masking:end_pos + cumulative_offset] = False
                 # Generate positions for this sequence
                 new_positions = torch.arange(
-                    1, seq_len[idx].item(), # starting from one since we have the start audio token
+                    0, seq_len[idx].item(), # starting from zero since we have the start audio token
                     device=input_ids.device,
                     dtype=positions.dtype
                 )
-
-                # Update positions directly using indexing
+                # Update positions
                 if end_pos + len(new_positions) <= len(positions):
-                    positions[end_pos + 1 + cumulative_offset:end_pos + cumulative_offset + seq_len[idx]] = new_positions
+                    positions[end_pos + cumulative_offset:end_pos + cumulative_offset + seq_len[idx]] = new_positions
+
+            else:
+
+                # Update masks
+                keep_mask[start_pos_for_masking:end_pos + cumulative_offset + 1] = False
 
             cumulative_offset += (end_pos - start_pos + 1)
 
@@ -576,7 +586,7 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
         # 1. We are in a first pass where we have a sequence of 1s tokens terminated by a start audio token,
         # we completely remove this and we keep the index on where to insert since we have already precomputed the values
         # 2. We are in a "second pass" (autoregressive pass), using the default process of vllm with corrected positions ids
-        # 3. We are in a logit only mode, since in xttsv2 ewe need to capture the hs,
+        # 3. We are in a logit only mode, since in xttsv2 we need to capture the hs,
         # and to do this we pass the conditioning alongside the generated tokens,
         # we need to remove the placeholder sequence at the beginning while adjusting
         # the positioning inside that condition
@@ -590,6 +600,7 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
             conditioning_inputs_list
         )
         if correct_positions is not None:
+            # only happens if chunk prefill is enabled
             positions[non_logit_mask & keep_mask] = correct_positions
 
         modified_input_ids = input_ids[keep_mask]
@@ -626,13 +637,14 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
 
         is_logits_only_mode = self._check_is_logits_only_mode(is_logits_only_mode)
 
-        #if not is_logits_only_mode:
+
         starting_sequence_start_ids, input_ids, positions = self._apply_op_to_seq_in_batch(input_ids,
-                                                                                               positions,
-                                                                                               cond_latents,
-                                                                                               is_logits_only_mode,
-                                                                                               sequence_length,
-                                                                                               is_profiling_run)
+                                                                                           positions,
+                                                                                           cond_latents,
+                                                                                           is_logits_only_mode,
+                                                                                           sequence_length,
+                                                                                           is_profiling_run)
+
 
         hidden_states = self.gpt(
             input_ids=input_ids,
@@ -644,6 +656,7 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
             input_embeds=cond_latents,
             starting_sequence_start_ids=starting_sequence_start_ids,
             is_profiling_run= is_profiling_run,
+            is_logit_only=is_logits_only_mode
         )
 
         return hidden_states
@@ -654,10 +667,12 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
             hidden_states: torch.Tensor,
             sampling_metadata: SamplingMetadata,
     ) -> Optional[torch.Tensor]:
-
         # normalize the hidden states
+        # we keep this, because in the xttsv2 code they have a nn.sequential with norm and then lm head
         hidden_states = self.final_norm(hidden_states)
 
+        # we keep track of the last collected index to properly associate the hidden states with the correct request_id
+        last_collected_idx = 0
         for seq in sampling_metadata.seq_groups:
             # Check if we need to collect hidden states
             sampling_params = seq.sampling_params
@@ -665,10 +680,12 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
                     and sampling_params.hidden_state_collector is not None):
                 self.positional_embeddings_correcter.clear_request(sampling_params.request_id)
                 # Call the collector directly with the hidden states
-                sampling_params.hidden_state_collector(hidden_states, sampling_params.request_id)  # The request_id is already bound
+                sampling_params.hidden_state_collector(hidden_states[last_collected_idx:last_collected_idx+seq.seq_len], sampling_params.request_id)  # The request_id is already bound
+
+            last_collected_idx += seq.seq_len or 0
 
         # Compute logits using the mel_head
-        logits = self.logits_processor(self.mel_head, hidden_states, sampling_metadata)
+        logits = self.logits_processor(self.mel_head, hidden_states, sampling_metadata, self.mel_head.bias)
         return logits
 
     # noinspection PyUnresolvedReferences
@@ -752,15 +769,20 @@ class GPT2Model(nn.Module):
     def _insert_conditioning_into_hidden_states(hidden_states: torch.Tensor,
                                                 conditioning_inputs: Optional[List[torch.Tensor]],
                                                 start_of_generation_embed: Optional[torch.Tensor],
-                                                insertion_ids: List[int]) -> torch.Tensor:
-
-        for idx, conditioning_input in zip(insertion_ids, conditioning_inputs):
+                                                insertion_ids: List[int],
+                                                is_logit_only: torch.Tensor) -> torch.Tensor:
+        empty_tensor = torch.empty(
+            (0,hidden_states.shape[-1]),
+            device=hidden_states.device, dtype=hidden_states.dtype
+        )
+        for idx, (inserion_idx, conditioning_input) in enumerate(zip(insertion_ids, conditioning_inputs)):
             hidden_states = torch.cat([
-                hidden_states[:idx],
+                hidden_states[:inserion_idx],
                 conditioning_input.squeeze(0),
-                start_of_generation_embed,
-                hidden_states[idx:]], dim=0
+                (start_of_generation_embed if ~is_logit_only[idx] else empty_tensor),
+                hidden_states[inserion_idx:]], dim=0
             )
+
 
         return hidden_states
 
@@ -774,20 +796,23 @@ class GPT2Model(nn.Module):
             input_embeds: Optional[torch.Tensor] = None,
             starting_sequence_start_ids: Optional[List[int]] = None,
             is_profiling_run: bool = False,
+            is_logit_only: torch.Tensor = False
     ) -> Union[torch.Tensor, IntermediateTensors]:
 
         if get_pp_group().is_first_rank:
-            starting_sequence_embed = None  # to not have a warning
-            if len(starting_sequence_start_ids) > 0:
-                # we have starting sequences, so we just need to get one hs to insert later
-                starting_sequence_embed = self.wte(
-                    torch.tensor(
-                        self.audio_start_generation_token,
-                        device=input_ids.device
-                    ).unsqueeze(0)
-                )
+            starting_sequence_embed = None
+            if isinstance(input_embeds, list) and len(input_embeds) > 0:
+                # we could be either in start condition or in a final condition or both
+                if len(starting_sequence_start_ids) > 0 and not (is_logit_only).all():
+                    # we have starting sequences, so we just need to get one hs to insert later
+                    starting_sequence_embed = self.wte(
+                        torch.tensor(
+                            self.audio_start_generation_token,
+                            device=input_ids.device
+                        ).unsqueeze(0)
+                    )
 
-                starting_sequence_embed += self.wpe(starting_sequence_embed.reshape(-1, 1))
+                    starting_sequence_embed += self.wpe(starting_sequence_embed.reshape(-1, 1))
 
             audio_inputs_embeds = self.wte(input_ids).squeeze(0)
 
@@ -801,12 +826,13 @@ class GPT2Model(nn.Module):
 
             hidden_states = audio_inputs_embeds + position_embeds
 
-            if len(starting_sequence_start_ids) > 0:
+            if isinstance(input_embeds, list) and len(input_embeds) > 0:
                 hidden_states = self._insert_conditioning_into_hidden_states(
-                        hidden_states,
-                        input_embeds,
-                        starting_sequence_embed,
-                        starting_sequence_start_ids)
+                    hidden_states,
+                    input_embeds,
+                    starting_sequence_embed,
+                    starting_sequence_start_ids,
+                    is_logit_only)
 
             hidden_states = hidden_states.view(-1, self.embed_dim)
 

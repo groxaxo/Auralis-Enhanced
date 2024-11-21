@@ -2,9 +2,11 @@ import asyncio
 import json
 import queue
 import threading
+import time
 from typing import AsyncGenerator, Optional, Dict, Union, Generator, List
 from huggingface_hub import hf_hub_download
 
+from auralis.common.logging.logger import setup_logger
 from auralis.common.definitions.output import TTSOutput
 from auralis.common.definitions.requests import TTSRequest
 from auralis.common.scheduling.two_phase_scheduler import TwoPhaseScheduler
@@ -17,6 +19,7 @@ class TTS:
         self.concurrency = scheduler_max_concurrency
         self.max_vllm_memory: Optional[int] = None
         self.set_vllm_memory(scheduler_max_concurrency)
+        self.logger = setup_logger(__file__)
 
         # Create a persistent event loop and thread for background tasks
         self.loop = asyncio.new_event_loop()
@@ -35,13 +38,13 @@ class TTS:
         # some hardcoded values for memory allocation, had been proven to work
         match scheduler_max_concurrency:
             case n if n <= 10:
-                self.max_vllm_memory = 2.5
+                self.max_vllm_memory = 7
             case n if n <= 20:
-                self.max_vllm_memory = 3
+                self.max_vllm_memory = 3.2
             case n if n <= 30:
-                self.max_vllm_memory = 3.5
+                self.max_vllm_memory = 3.75
             case n if n <= 40:
-                self.max_vllm_memory = 4
+                self.max_vllm_memory = 4.3
             case _:
                 self.max_vllm_memory = 6
 
@@ -120,129 +123,136 @@ class TTS:
             raise e
 
     async def _second_phase_fn(self, gen_input: Dict) -> AudioOutputGenerator:
-        """
-        Second phase: Generate speech using the existing TTS engine.
-        """
-
+        """Second phase: Generate speech using the existing TTS engine."""
         async for chunk in self._process_single_generator(gen_input):
             yield chunk
 
-    async def generate_speech_async(self,
-                                    requests: TTSRequest
-                                    ) -> Union[AsyncGenerator[TTSOutput, None], TTSOutput]:
-        """Generate speech for single request asynchronously."""
-
-        if requests.stream:
-            async def async_gen():
+    async def generate_speech_async(self, request: TTSRequest) -> Union[AsyncGenerator[TTSOutput, None], TTSOutput]:
+        async def process_chunks():
+            chunks = []
+            try:
                 async for chunk in self.scheduler.run(
-                    inputs=requests,
-                    first_phase_fn=self._prepare_generation_context,
-                    second_phase_fn=self._second_phase_fn
+                        inputs=request,
+                        request_id=request.request_id,
+                        first_phase_fn=self._prepare_generation_context,
+                        second_phase_fn=self._second_phase_fn
                 ):
-                    yield chunk
+                    if request.stream:
+                        yield chunk
+                    chunks.append(chunk)
+            except Exception as e:
+                self.logger.error(f"Error during speech generation: {e}")
+                raise
 
-            return async_gen()
+            if not request.stream:
+                yield TTSOutput.combine_outputs(chunks)
+
+        if request.stream:
+            return process_chunks()
         else:
-            complete_audio = []
+            async for result in process_chunks():
+                return result
+
+    @staticmethod
+    def split_requests(request: TTSRequest, max_length: int = 100000) -> List[TTSRequest]:
+        """Split a single request into multiple requests with shorter text chunks to fix max tokenizer len."""
+        if len(request.text) <= max_length:
+            return [request]
+
+        text_chunks = [request.text[i:i + max_length]
+                       for i in range(0, len(request.text), max_length)]
+
+        return [
+            TTSRequest(
+                text=chunk,
+                language=request.language,
+                speaker_files=request.speaker_files,
+                stream=request.stream
+            ) for chunk in text_chunks
+        ]
+
+    async def _process_multiple_requests(self, requests: List[TTSRequest], results: Optional[List] = None) -> Optional[
+        TTSOutput]:
+        # Use a queue for each sub-request to maintain order while allowing parallel processing
+        output_queues = [asyncio.Queue() for _ in requests] if results is not None else None
+
+        async def process_subrequest(idx, sub_request, queue: Optional[asyncio.Queue] = None):
+            chunks = []
             async for chunk in self.scheduler.run(
-                    inputs=requests,
+                    inputs=sub_request,
+                    request_id=sub_request.request_id,
                     first_phase_fn=self._prepare_generation_context,
                     second_phase_fn=self._second_phase_fn
             ):
-                complete_audio.append(chunk)
+                chunks.append(chunk)
+                if queue is not None:
+                    await queue.put(chunk)  # Put chunks in their respective queue
+
+            if queue is not None:
+                await queue.put(None)  # Signal end of stream
+            return chunks
+
+        # Create and start all tasks in parallel for maximum throughput
+        tasks = [
+            asyncio.create_task(
+                process_subrequest(
+                    idx,
+                    sub_request,
+                    output_queues[idx] if output_queues else None
+                )
+            )
+            for idx, sub_request in enumerate(requests)
+        ]
+
+        if results is not None:
+            # Streaming case: consume queues in order to maintain sequence
+            for idx, queue in enumerate(output_queues):
+                while True:
+                    chunk = await queue.get()
+                    if chunk is None:  # End of stream for this sub-request
+                        break
+                    results[idx].append(chunk)
+            return None
+        else:
+            # Non-streaming case: gather all results
+            all_chunks = await asyncio.gather(*tasks)
+            complete_audio = [chunk for chunks in all_chunks for chunk in chunks]
             return TTSOutput.combine_outputs(complete_audio)
 
     def generate_speech(self, request: TTSRequest) -> Union[Generator[TTSOutput, None, None], TTSOutput]:
-        """Generate speech for single or multiple requests, handling long texts by splitting and maintaining order."""
-
-        def split_requests(request: TTSRequest, max_length: int = 100000) -> List[TTSRequest]:
-            """Split a single request into multiple requests with shorter text chunks."""
-            if len(request.text) <= max_length:
-                return [request]
-
-            text_chunks = [request.text[i:i + max_length]
-                           for i in range(0, len(request.text), max_length)]
-
-            return [
-                TTSRequest(
-                    text=chunk,
-                    language=request.language,
-                    speaker_files=request.speaker_files,
-                    stream=request.stream
-                ) for chunk in text_chunks
-            ]
-
-        requests = split_requests(request)
+        requests = self.split_requests(request)
 
         if request.stream:
             def sync_generator():
-                q = queue.Queue()
-                results = [None] * len(requests)
+                # Initialize result buffer for each sub-request
+                results = [[] for _ in requests]
+                future = asyncio.run_coroutine_threadsafe(
+                    self._process_multiple_requests(requests, results),
+                    self.loop
+                )
 
-                async def async_gen():
-                    try:
-                        async def process_subrequest(idx, sub_request):
-                            chunks = []
-                            async for chunk in self.scheduler.run(
-                                    inputs=sub_request,
-                                    first_phase_fn=self._prepare_generation_context,
-                                    second_phase_fn=self._second_phase_fn
-                            ):
-                                chunks.append(chunk)
-                            results[idx] = chunks
+                current_idx = 0  # Track current sub-request being processed
+                while current_idx < len(results):
+                    # Yield available chunks for current sub-request
+                    while results[current_idx]:
+                        yield results[current_idx].pop(0)
 
-                        tasks = [asyncio.create_task(process_subrequest(idx, sub_request)) for idx, sub_request in
-                                 enumerate(requests)]
-                        await asyncio.gather(*tasks)
-                    except Exception as e:
-                        q.put(e)
-                    finally:
-                        q.put(None)
+                    # Move to next sub-request if current one is complete
+                    if future.done() and not results[current_idx]:
+                        current_idx += 1
+                        continue
 
-                # Schedule the async_gen coroutine in the event loop
-                asyncio.run_coroutine_threadsafe(async_gen(), self.loop)
+                    # Check for errors in the async processing
+                    if future.done() and future.exception():
+                        raise future.exception()
 
-                while True:
-                    item = q.get()
-                    if item is None:
-                        break
-                    if isinstance(item, Exception):
-                        raise item
-
-                # Yield results in the order of the original requests
-                for chunks in results:
-                    if chunks:
-                        for chunk in chunks:
-                            yield chunk
+                    # Small sleep to prevent CPU overload
+                    time.sleep(0.01)
 
             return sync_generator()
         else:
-            async def async_combine_chunks():
-                results = [None] * len(requests)
-
-                async def process_subrequest(idx, sub_request):
-                    chunks = []
-                    async for chunk in self.scheduler.run(
-                            inputs=sub_request,
-                            first_phase_fn=self._prepare_generation_context,
-                            second_phase_fn=self._second_phase_fn
-                    ):
-                        chunks.append(chunk)
-                    results[idx] = chunks
-
-                tasks = [asyncio.create_task(process_subrequest(idx, sub_request)) for idx, sub_request in
-                         enumerate(requests)]
-                await asyncio.gather(*tasks)
-                complete_audio = []
-                for chunks in results:
-                    if chunks:
-                        complete_audio.extend(chunks)
-                return TTSOutput.combine_outputs(complete_audio)
-
-            # Schedule the async_combine_chunks coroutine in the event loop
-            future = asyncio.run_coroutine_threadsafe(async_combine_chunks(), self.loop)
-            result = future.result()
-            return result
+            future = asyncio.run_coroutine_threadsafe(self._process_multiple_requests(requests), self.loop)
+            return future.result()
 
     async def shutdown(self):
         if self.scheduler:

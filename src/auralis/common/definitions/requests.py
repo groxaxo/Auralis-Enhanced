@@ -1,5 +1,5 @@
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Union, AsyncGenerator, Optional, List, Literal
 
 
@@ -10,7 +10,7 @@ class TTSRequest:
     text: Union[AsyncGenerator[str, None], str, List[str]]
     language: str
     speaker_files: Union[List[str], bytes]  # Path to the speaker audio file
-    request_id: str = uuid.uuid4().hex
+    request_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     load_sample_rate: int = 22050
     sound_norm_refs: bool = False
 
