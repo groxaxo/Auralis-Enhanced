@@ -5,6 +5,7 @@ import threading
 import time
 from typing import AsyncGenerator, Optional, Dict, Union, Generator, List
 from huggingface_hub import hf_hub_download
+from torch.onnx.symbolic_opset11 import chunk
 
 from auralis.common.logging.logger import setup_logger
 from auralis.common.definitions.output import TTSOutput
@@ -58,8 +59,7 @@ class TTS:
                 config = json.load(f)
             kwargs['max_vllm_memory'] = self.max_vllm_memory
             kwargs['max_concurrency'] = self.concurrency
-            if 'disable_vllm_logs' not in kwargs:
-                kwargs['disable_vllm_logs'] = False
+
             self.tts_engine = MODEL_REGISTRY[config['model_type']].from_pretrained(model_name_or_path, **kwargs)
             return self
         except Exception as e:
@@ -98,7 +98,7 @@ class TTS:
                                    gpt_like_decoder_conditioning is not None and isinstance(gpt_like_decoder_conditioning, list) else
                                    gpt_like_decoder_conditioning if gpt_like_decoder_conditioning is not None else
                                    None,
-                'request_id': requests_ids[i],
+                'request': input_request,
 
             }
             for i, gen in enumerate(audio_token_generators)
@@ -116,7 +116,7 @@ class TTS:
                     generator=gen_input['generator'],
                     speaker_embeddings=gen_input['speaker_embedding'],
                     multimodal_data=gen_input['multimodal_data'],
-                    request_id = gen_input['request_id']
+                    request = gen_input['request'],
             ):
                 yield chunk
         except Exception as e:
@@ -163,12 +163,8 @@ class TTS:
                        for i in range(0, len(request.text), max_length)]
 
         return [
-            TTSRequest(
-                text=chunk,
-                language=request.language,
-                speaker_files=request.speaker_files,
-                stream=request.stream
-            ) for chunk in text_chunks
+            (copy := request.copy(), setattr(copy, 'text', chunk))[0]
+            for chunk in text_chunks
         ]
 
     async def _process_multiple_requests(self, requests: List[TTSRequest], results: Optional[List] = None) -> Optional[

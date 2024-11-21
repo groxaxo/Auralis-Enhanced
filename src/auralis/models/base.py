@@ -78,7 +78,7 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
             generator: AudioTokenGenerator,
             speaker_embeddings: SpeakerEmbeddings,
             multimodal_data: GPTLikeDecoderConditioning = None,
-            request_id: RequestsIds = None
+            request: TTSRequest = None,
     ) -> AudioOutputGenerator:
         """
         Generate speech from token generators.

@@ -118,7 +118,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.text_head = nn.Linear(gpt_config.hidden_size, gpt_config.number_text_tokens, bias=True)
 
         # Initialize VLLM engine at the end, settings its concurrency
-        self.init_vllm_engine(self.max_concurrency, kwargs['disable_vllm_logs'])
+        self.init_vllm_engine(self.max_concurrency)
 
         # Semaphore for concurrency control of the encoding process
         self.encoder_semaphore = asyncio.BoundedSemaphore(max(1,self.max_concurrency // 15)) # empirically found a good value
@@ -150,7 +150,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             args = tuple(args)
         return super().to(*args, **kwargs)
 
-    def init_vllm_engine(self, concurrency, disable_vllm_logs):
+    def init_vllm_engine(self, concurrency):
         """Initialize models with AsyncVLLMEngine."""
         max_seq_num = concurrency
         engine_args = AsyncEngineArgs(
@@ -165,7 +165,6 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             trust_remote_code=True,
             enforce_eager=True,
             limit_mm_per_prompt={"audio": 1}, # even if more audio are present, they'll be condendesed into one
-            disable_log_stats=disable_vllm_logs,
             max_num_seqs=max_seq_num,
             max_num_batched_tokens=(self.gpt_config.max_text_tokens +
                                     self.gpt_config.max_audio_tokens +
@@ -575,7 +574,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             generator: AsyncGenerator[RequestOutput, None],
             speaker_embeddings: Optional[torch.Tensor] = None,
             multimodal_data: Optional[torch.Tensor] = None,
-            request_id: Optional[str] = None,
+            request: TTSRequest = None,
     ) -> AsyncGenerator[TTSOutput, None]:
         """
         Process a single token generator and emit results.
@@ -584,7 +583,9 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         assert speaker_embeddings is not None, "Speaker embeddings must be provided for speech generation with XTTSv2."
         assert multimodal_data is not None, "Multimodal data must be provided for speech generation with XTTSv2."
 
+
         async for output in generator:
+
             if output.finished:
                 # get the hidden states
                 hidden_states = await self.get_model_logits(
@@ -596,7 +597,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                             "sequence_length": False # to be inserted later
                         },
                     },
-                    request_id
+                    request.request_id
                 )
 
                 async with self.decoder_semaphore:
@@ -609,6 +610,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                             ).cpu().detach().numpy().squeeze()
                         ) # noqa
 
+                #accumulated_content = []
                 # yield the audio output
                 yield TTSOutput(wav=wav)
 
