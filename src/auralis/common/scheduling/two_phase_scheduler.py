@@ -54,6 +54,7 @@ class TwoPhaseScheduler:
                         self.active_requests[request.id] = request
                         await self._process_request(request)
             except asyncio.CancelledError:
+                self.logger.warning("Queue processing task cancelled")
                 break
             except Exception as e:
                 self.logger.error(f"Queue processing error: {e}")
@@ -96,6 +97,8 @@ class TwoPhaseScheduler:
                 timeout=self.request_timeout
             )
             request.generators_count = len(request.first_phase_result.get('parallel_inputs', []))
+            # Initialize sequence_buffers here
+            request.sequence_buffers = {i: [] for i in range(request.generators_count)}
             request.state = TaskState.PROCESSING_SECOND
         except asyncio.TimeoutError:
             raise TimeoutError(f"First phase timeout after {self.request_timeout}s")
@@ -154,10 +157,12 @@ class TwoPhaseScheduler:
                     generator.__anext__(),
                     timeout=self.generator_timeout
                 )
+
                 event = asyncio.Event()
                 event.set()
                 buffer.append((item, event))
             except StopAsyncIteration:
+                self.logger.debug(f"Generator {sequence_idx} completed for request {request.id}")
                 break
             except asyncio.TimeoutError:
                 raise TimeoutError(f"Generator {sequence_idx} timed out")
@@ -198,8 +203,9 @@ class TwoPhaseScheduler:
                     except asyncio.TimeoutError:
                         raise TimeoutError(f"Timeout waiting for item in sequence {current_index}")
 
-                    if self._can_advance_sequence(request, current_index):
-                        current_index += 1
+
+                    current_index += 1
+
 
             await asyncio.sleep(0.01)
 

@@ -26,10 +26,15 @@ class TTS:
         self.set_vllm_memory(scheduler_max_concurrency)
         self.logger = setup_logger(__file__)
 
-        # Create a persistent event loop and thread for background tasks
-        self.loop = asyncio.new_event_loop()
-        self.loop_thread = threading.Thread(target=self._run_event_loop, daemon=True)
-        self.loop_thread.start()
+        try:
+            # Try to get existing loop
+            self.loop = asyncio.get_event_loop()
+        except RuntimeError:
+            # If no loop exists, create new one
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
+            self.loop_thread = threading.Thread(target=self._run_event_loop, daemon=True)
+            self.loop_thread.start()
 
     def _run_event_loop(self):
         asyncio.set_event_loop(self.loop)

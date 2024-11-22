@@ -62,7 +62,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.request_counter = Counter()
 
         self.max_concurrency = kwargs.get('max_concurrency', 10)
-        semaphore_concurrency = max(1, self.max_concurrency // 6)  # empirically found a good value
+        semaphore_concurrency = self.max_concurrency
         self.executor = ThreadPoolExecutor(max_workers=semaphore_concurrency)  # For CPU-bound tasks
 
         self.max_gb_for_vllm_model = max_gb_for_vllm_model
@@ -123,7 +123,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.init_vllm_engine(self.max_concurrency)
 
         # Semaphore for concurrency control of the encoding process
-        self.encoder_semaphore = asyncio.BoundedSemaphore(semaphore_concurrency) # empirically found a good value
+        self.encoder_semaphore = asyncio.BoundedSemaphore(semaphore_concurrency)
         self.decoder_semaphore = asyncio.BoundedSemaphore(semaphore_concurrency) # empirically found a good value
         self.eval()
 
@@ -131,7 +131,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
     def conditioning_config(self) -> ConditioningConfig:
         return ConditioningConfig(
             speaker_embeddings=True, # noqa
-            gpt_like_decoder_conditioning=True # noqa ?? why it is giving a warning?
+            gpt_like_decoder_conditioning=True # noqa
         )
 
     def half(self):
@@ -600,8 +600,9 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                             "sequence_length": False # to be inserted later
                         },
                     },
-                    request.request_id
+                    output.request_id
                 )
+
 
                 async with self.decoder_semaphore:
                     async with self.cuda_memory_manager():
@@ -613,11 +614,13 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                             ).cpu().detach().numpy().squeeze()
                         ) # noqa
 
+
                 # yield the audio output
                 yield TTSOutput(array= wav,
                                 start_time = request.start_time,
                                 token_length = len(output.outputs[0].token_ids)
                                 )
+
 
 
 async def shutdown(self):
