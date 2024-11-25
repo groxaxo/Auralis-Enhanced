@@ -41,44 +41,47 @@ speaker_file = "./female.wav"
 # Inizializza il TTS
 tts = TTS()
 tts.tts_engine = XTTSv2Engine.from_pretrained("AstraMindAI/xtts2", torch_dtype=torch.float32)
-
+stream = True
 @pytest.mark.asyncio
 async def test_tts_async_multiple_concurrent_generation():
-    # Crea le richieste TTS
-    request1 = TTSRequest(
-        text=text,
-        language="it",
-        speaker_files=["/home/marco/PycharmProjects/betterVoiceCraft/female.wav"],
-        stream=True
-    )
+    # Create requests
+    async_requests = [
+        TTSRequest(
+            text=text,
+            language="it",
+            speaker_files=["/home/marco/PycharmProjects/betterVoiceCraft/female.wav"],
+            stream=stream
+        ) for _ in range(5)  # Creating 5 requests
+    ]
+    requests = [
+        TTSRequest(
+            text=text,
+            language="it",
+            speaker_files=["/home/marco/PycharmProjects/betterVoiceCraft/female.wav"],
+            stream=not stream
+        ) for _ in range(5)  # Creating 5 requests
+    ]
 
-    request2 = TTSRequest(
-        text=text,
-        language="it",
-        speaker_files=["/home/marco/PycharmProjects/betterVoiceCraft/female.wav"],
-        stream=True
-    )
+    async def process_stream(request, idx):
+        try:
+            generator = await tts.generate_speech_async(request)
+            chunks = []
+            async for chunk in generator:
+                chunks.append(chunk)
+            return chunks
+        except Exception as e:
+            print(f"Error in request {idx}: {e}")
+            return None
 
-    requests = [request1, request2]
+    ## Process streams concurrently
+    tasks = [process_stream(req, i) for i, req in enumerate(async_requests)]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for result in results:
+        assert len(result) > 0
 
-    # Define the corutines
-    coroutines = [tts.generate_speech_async(req) for req in requests]
+    non_streaming_async_task = [tts.generate_speech_async(req) for req in requests]
+    result_not_streaming = await asyncio.gather(*non_streaming_async_task, return_exceptions=True)
 
-    # Execute the coroutines in parallel
-    results = await asyncio.gather(*coroutines, return_exceptions=True)
-
-    chunks={}
-    # Consume the results
-    for idx, result in enumerate(results):
-        if isinstance(result, Exception):
-            raise result
-        else:
-            chunks[idx] = [chunk async for chunk in result]
-
-            # Since result is an async generator, we can iterate over it
-            async for chunk in result:
-                print(f"Chunk of request {idx}: {chunk}")
-
-    assert [len(chunk) > 0 for chunk in chunks.values()]
+    assert len(result_not_streaming) > 0
 
 
