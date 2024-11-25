@@ -25,6 +25,7 @@ class TwoPhaseScheduler:
         self.request_queue = None
         self.active_requests = {}
         self.queue_processor_tasks = []
+        self.cancel_warning_issued = False
 
         # Concurrency controls
         self.second_phase_sem = None
@@ -54,7 +55,9 @@ class TwoPhaseScheduler:
                         self.active_requests[request.id] = request
                         await self._process_request(request)
             except asyncio.CancelledError:
-                self.logger.warning("Queue processing task cancelled")
+                if not self.cancel_warning_issued:
+                    self.logger.warning("Queue processing task cancelled")
+                    self.cancel_warning_issued = True
                 break
             except Exception as e:
                 self.logger.error(f"Queue processing error: {e}")
@@ -80,6 +83,7 @@ class TwoPhaseScheduler:
 
             if not request.error:
                 request.state = TaskState.COMPLETED
+                self.logger.info(f"Request {request.id} completed")
 
         except Exception as e:
             request.error = e
