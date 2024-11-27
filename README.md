@@ -1,3 +1,5 @@
+[![](https://dcbadge.limes.pink/api/server/https://discord.gg/BEMVTmcPEs)](https://discord.gg/https://discord.gg/BEMVTmcPEs)
+
 # Auralis 🌌 (/auˈralis/)
 
 Transform text into natural speech at warp speed. Process an entire novel in minutes, not hours.
@@ -450,7 +452,7 @@ Memory usage:
 
 ## Learn More 🔭
 
-- [Technical Deep Dive](https://www.astramind.ai/blog/Auralis)
+- [Technical Deep Dive](https://www.astramind.ai/post/auralis)
 - [Adding Custom Models](docs/ADDING_MODELS.md)
 
 ## License
