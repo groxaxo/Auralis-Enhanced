@@ -445,8 +445,8 @@ Processing speeds on NVIDIA 3090:
 - Full books (~100K chars): ~10 minutes
 
 Memory usage:
-- Base: ~4GB VRAM
-- Peak: ~10GB VRAM
+- Base: ~2GB VRAM
+
 
 ## Learn More 🔭
 
