@@ -244,7 +244,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
         return model
 
-    async def get_speaker_embedding(self, audio, sr):
+    async def _get_speaker_embedding(self, audio, sr):
         audio_16k = torchaudio.functional.resample(audio, sr, 16000)
         async with self.decoder_semaphore:
             return (
@@ -252,6 +252,16 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 .unsqueeze(-1)
                 .to(self.device)
             )
+
+    async def _merge_conditioning(self,
+                                  text_conditioning: List[torch.Tensor],
+                                  audio_conditioning: torch.Tensor) -> List[torch.Tensor]:
+        cond_latents = []
+        for text_embedding in text_conditioning:
+            # Concatenate along sequence dimension
+            cond_latents.append((torch.cat([audio_conditioning, text_embedding], dim=1).squeeze(0)
+                                 .to(self.llm_engine.engine.model_config.dtype)))
+        return cond_latents
 
     def get_gpt_cond_latents(self, audio, sr, length: int = 30, chunk_length: int = 6):
         """Compute the conditioning latents for the GPT model from the given audio."""
@@ -333,7 +343,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 audio = librosa.effects.trim(audio, top_db=librosa_trim_db)[0]
 
             # Compute latents for the decoder
-            speaker_embedding = await self.get_speaker_embedding(audio, load_sr)
+            speaker_embedding = await self._get_speaker_embedding(audio, load_sr)
             speaker_embeddings.append(speaker_embedding)
 
             audios.append(audio)
@@ -404,6 +414,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         return fake_tokens_for_audio_generation, await embed_tokens(text_tokens)
 
 
+
     async def prepare_inputs_async(self, text: str, language: str, speaker_file: List[Union[str, Path]],
                                    max_ref_length: int, gpt_cond_len: int, gpt_cond_chunk_len: int, split_text: bool) \
             -> Tuple[List[List[int]], List[torch.Tensor], torch.Tensor]:
@@ -419,11 +430,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             gpt_cond_chunk_len
         )
 
-        cond_latents = []
-        for text_embedding in text_embeddings:
-            # Concatenate along sequence dimension
-            cond_latents.append((torch.cat([gpt_cond_latent, text_embedding], dim=1).squeeze(0)
-                                 .to(self.llm_engine.engine.model_config.dtype)))
+        cond_latents = await self._merge_conditioning(text_embeddings, gpt_cond_latent)
 
         return text_tokens, cond_latents, speaker_embeddings
 
@@ -516,21 +523,28 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         return self.final_norm(hidden_states[start_of_audio_hs:-5, ...].unsqueeze(0).to(self.device).to(self.dtype))
 
 
-
     @torch.inference_mode()
     async def get_generation_context(self,
                                      request: TTSRequest,
+                                     gpt_cond_latent: Optional[torch.Tensor] = None,
+                                     speaker_embeddings: Optional[torch.Tensor] = None,
                                      ) -> TokenGeneratorsAndPossiblyConditioning:
-        # Prepare input with conditioning
-        tokens_list, gpt_embed_inputs, speaker_embeddings = await self.prepare_inputs_async(
-            request.text,
-            request.language,
-            request.speaker_files,
-            request.max_ref_length,
-            request.gpt_cond_len,
-            request.gpt_cond_chunk_len,
-            split_text=True  # Split text to avoid OOM on big texts
-        )
+        if not gpt_cond_latent or not speaker_embeddings:
+            # Prepare input with conditioning
+            tokens_list, gpt_embed_inputs, speaker_embeddings = await self.prepare_inputs_async(
+                request.text,
+                request.language,
+                request.speaker_files,
+                request.max_ref_length,
+                request.gpt_cond_len,
+                request.gpt_cond_chunk_len,
+                split_text=True  # Split text to avoid OOM on big texts
+            )
+        else:
+            tokens_list, text_embeddings = await self.prepare_text_tokens_async(request.text,
+                                                                                request.language,
+                                                                                split_text=True)
+            gpt_embed_inputs = await self._merge_conditioning(text_embeddings, gpt_cond_latent)
 
         # Start all requests in parallel
         generators = []

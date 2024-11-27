@@ -1,7 +1,7 @@
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Union, AsyncGenerator, Optional, List, Literal, get_args
+from typing import Union, AsyncGenerator, Optional, List, Literal, get_args, Callable
 
 import langid
 import librosa
@@ -12,6 +12,8 @@ import hashlib
 import json
 from functools import lru_cache
 from dataclasses import asdict
+
+import torch
 from cachetools import LRUCache
 
 
@@ -94,9 +96,11 @@ class TTSRequest:
     text: Union[AsyncGenerator[str, None], str, List[str]]
 
     speaker_files: Union[List[str], bytes]  # Path to the speaker audio file
+    context_partial_function: Optional[Callable] = None
 
     start_time: Optional[float] = None
     enhance_speech: bool = True
+    from_stream: bool = False
     audio_config: AudioPreprocessingConfig = field(default_factory=AudioPreprocessingConfig)
     language: SupportedLanguages = "auto"
     request_id: str = field(default_factory=lambda: uuid.uuid4().hex)
@@ -118,13 +122,17 @@ class TTSRequest:
     do_sample: bool = True
 
     def __post_init__(self):
-        if self.language == 'auto':
+        if self.language == 'auto' and len(self.text) > 0:
             self.language = get_language(self.text)
 
         validate_language(self.language)
         self.processor = EnhancedAudioProcessor(self.audio_config)
         if isinstance(self.speaker_files, list) and self.enhance_speech:
             self.speaker_files = [self.preprocess_audio(f, self.audio_config) for f in self.speaker_files]
+
+    def infer_language(self):
+        if self.language == '':
+            self.language = get_language(self.text)
 
     @cached_processing()
     def preprocess_audio(self, audio_path: str, audio_config: AudioPreprocessingConfig) -> str:

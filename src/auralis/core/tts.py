@@ -5,6 +5,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import Future
+from functools import partial
 from typing import AsyncGenerator, Optional, Dict, Union, Generator, List
 from huggingface_hub import hf_hub_download
 
@@ -14,6 +15,8 @@ from auralis.common.definitions.requests import TTSRequest
 from auralis.common.metrics.performance import track_generation
 from auralis.common.scheduling.two_phase_scheduler import TwoPhaseScheduler
 from auralis.models.base import BaseAsyncTTSEngine, AudioOutputGenerator
+from hf_converted_files.deault_tts import gpt_cond_latent
+
 
 class TTS:
     def __init__(self, scheduler_max_concurrency: int = 10):
@@ -64,24 +67,36 @@ class TTS:
         except Exception as e:
             raise ValueError(f"Could not load model from {model_name_or_path}: {e}")
 
+    async def prepare_for_streaming_generation(self, request: TTSRequest):
+        conditioning_config = self.tts_engine.conditioning_config
+        if conditioning_config.speaker_embeddings or conditioning_config.gpt_like_decoder_conditioning:
+            gpt_cond_latent, speaker_embeddings = await self.tts_engine.get_audio_conditioning(request)
+            return partial(self.tts_engine.get_generation_context,
+                           gpt_cond_latent=gpt_cond_latent,
+                           speaker_embeddings=speaker_embeddings)
+
     async def _prepare_generation_context(self, input_request: TTSRequest):
         """Prepare the generation context for the first phase."""
         conditioning_config = self.tts_engine.conditioning_config
         input_request.start_time = time.time()
-        audio_token_generators, speaker_embeddings, gpt_like_decoder_conditioning = None, None, None
-
-        if conditioning_config.speaker_embeddings and conditioning_config.gpt_like_decoder_conditioning:
-            (audio_token_generators, requests_ids,
-             speaker_embeddings,
-             gpt_like_decoder_conditioning) = await self.tts_engine.get_generation_context(input_request)
-        elif conditioning_config.speaker_embeddings:
-            (audio_token_generators, requests_ids,
-             speaker_embeddings) = await self.tts_engine.get_generation_context(input_request)
-        elif conditioning_config.gpt_like_decoder_conditioning:
-            (audio_token_generators, requests_ids,
-             gpt_like_decoder_conditioning) = await self.tts_engine.get_generation_context(input_request)
+        if input_request.context_partial_function:
+            audio_token_generators, request_ids, gpt_like_decoder_conditioning = \
+                await input_request.context_partial_function(input_request)
         else:
-            audio_token_generators, requests_ids = await self.tts_engine.get_generation_context(input_request)
+            audio_token_generators, speaker_embeddings, gpt_like_decoder_conditioning = None, None, None
+
+            if conditioning_config.speaker_embeddings and conditioning_config.gpt_like_decoder_conditioning:
+                (audio_token_generators, requests_ids,
+                 speaker_embeddings,
+                 gpt_like_decoder_conditioning) = await self.tts_engine.get_generation_context(input_request)
+            elif conditioning_config.speaker_embeddings:
+                (audio_token_generators, requests_ids,
+                 speaker_embeddings) = await self.tts_engine.get_generation_context(input_request)
+            elif conditioning_config.gpt_like_decoder_conditioning:
+                (audio_token_generators, requests_ids,
+                 gpt_like_decoder_conditioning) = await self.tts_engine.get_generation_context(input_request)
+            else:
+                audio_token_generators, requests_ids = await self.tts_engine.get_generation_context(input_request)
 
         parallel_inputs = [
             {
