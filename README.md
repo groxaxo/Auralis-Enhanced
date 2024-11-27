@@ -7,7 +7,7 @@ Transform text into natural speech at warp speed. Process an entire novel in min
 Auralis is a text-to-speech engine that makes voice generation practical for real-world use:
 
 - Convert the entire first Harry Potter book to speech in 10 minutes
-- Requires less than 10GB VRAM on a single NVIDIA 3090
+- It can be configured to have a small memory footprint (scheduler_max_concurrency)
 - Process multiple requests simultaneously
 - Stream long texts piece by piece
 
@@ -445,8 +445,8 @@ Processing speeds on NVIDIA 3090:
 - Full books (~100K chars): ~10 minutes
 
 Memory usage:
-- Base: ~4GB VRAM
-- Peak: ~10GB VRAM
+- Base: ~2GB VRAM
+
 
 ## Learn More 🔭
 
