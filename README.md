@@ -448,7 +448,7 @@ Processing speeds on NVIDIA 3090:
 
 Memory usage:
 - Base: ~2.5GB VRAM concurrencey = 1
-- ~ 5.3GB VRAM concurrencey = 10
+- ~ 5.3GB VRAM concurrency = 20
 
 
 
