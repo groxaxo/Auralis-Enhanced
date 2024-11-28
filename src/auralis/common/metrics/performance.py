@@ -4,13 +4,14 @@ from functools import wraps
 from typing import TypeVar, AsyncGenerator, Callable, Any
 from auralis.common.logging.logger import setup_logger
 
-logger = setup_logger(__file__)
 
 T = TypeVar('T')
 
 
 @dataclass
 class TTSMetricsTracker:
+    logger = setup_logger(__file__)
+
     window_start: float = field(default_factory=time.time)
     last_log_time: float = field(default_factory=time.time)
     log_interval: float = 5.0  # sec between logs
@@ -65,7 +66,7 @@ def track_generation(func: Callable[..., AsyncGenerator[T, None]]) -> Callable[.
                 audio_seconds = output.array.shape[0] / output.sample_rate
 
                 if metrics.update_metrics(output.token_length, audio_seconds):
-                    logger.info(
+                    metrics.logger.info(
                         f"Generation metrics | "
                         f"Throughput: {metrics.requests_per_second:.2f} req/s | "
                         f"{metrics.tokens_per_second:.1f} tokens/s | "

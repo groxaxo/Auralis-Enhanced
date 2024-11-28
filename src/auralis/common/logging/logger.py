@@ -13,34 +13,40 @@ import os
 # Initialize colorama
 colorama.init()
 
+VLLM_LOGGER_LEVEL: logging
 
 class VLLMLogOverrider:
-    """Override VLLM loggers to show only performance metrics"""
+    """Override VLLM loggers to use custom formatting"""
 
     def __init__(self, target_logger: logging.Logger):
         self.target_logger = target_logger
         self.perf_pattern = re.compile(
             r"Avg prompt throughput:.+tokens/s,.+GPU KV cache usage:.+CPU KV cache usage:.+"
         )
+        self.pipeline_warning_pattern = re.compile(r"Your model uses the legacy input pipeline instead of the new")
         self._override_vllm_loggers()
 
     def _override_vllm_loggers(self):
-        """Override all VLLM loggers to use our custom handler"""
+        """Override VLLM loggers to use our custom handler"""
+        global VLLM_LOGGER_LEVEL
         for name in logging.root.manager.loggerDict:
             if name.startswith('vllm'):
                 vllm_logger = logging.getLogger(name)
+                current_level = VLLM_LOGGER_LEVEL
                 vllm_logger.handlers.clear()
                 vllm_logger.propagate = False
                 handler = self._create_redirecting_handler()
                 vllm_logger.addHandler(handler)
+                vllm_logger.setLevel(current_level)
 
     def _create_redirecting_handler(self):
-        """Create a handler that only shows performance metrics"""
+        """Create a handler that uses our custom formatting"""
 
         class RedirectHandler(logging.Handler):
-            def __init__(self, target_logger, perf_pattern):
+            def __init__(self, target_logger, perf_pattern, pipe_warn):
                 super().__init__()
                 self.target_logger = target_logger
+                self.pipe_warn = pipe_warn
                 self.perf_pattern = perf_pattern
 
             def emit(self, record):
@@ -48,12 +54,18 @@ class VLLMLogOverrider:
                 if record.args:
                     msg = msg % record.args
 
-                # Only show performance metrics
+                # Modify performance metrics format
                 if self.perf_pattern.search(msg):
-                    self.target_logger.info(f"Decoder performance: {msg}")
-                # Silently drop all other VLLM logs
+                    self.target_logger.log(record.levelno, f"Decoder performance: {msg}")
+                elif self.pipe_warn.search(msg):
+                    # Skip pipeline warning logs
+                    pass
+                else:
+                    # Pass through all other logs normally
+                    self.target_logger.log(record.levelno, msg)
 
-        return RedirectHandler(self.target_logger, self.perf_pattern)
+        return RedirectHandler(self.target_logger, self.perf_pattern, self.pipeline_warning_pattern)
+
 
 class ColoredFormatter(logging.Formatter):
     """Colored formatter with structured output and file location"""
@@ -157,14 +169,12 @@ def setup_logger(
     return logger
 
 
-def set_vllm_logging_level(level: int = logging.INFO):
+def set_vllm_logging_level(level: logging):
     """
     Set the logging level for VLLM loggers
 
     Args:
         level: Logging level to set (e.g., logging.INFO, logging.ERROR)
     """
-    for name in logging.root.manager.loggerDict:
-        if name.startswith('vllm'):
-            logger = logging.getLogger(name)
-            logger.setLevel(level)
+    global VLLM_LOGGER_LEVEL
+    VLLM_LOGGER_LEVEL = level

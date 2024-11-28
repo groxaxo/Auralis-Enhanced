@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import queue
 import threading
 import time
@@ -9,7 +10,7 @@ from functools import partial
 from typing import AsyncGenerator, Optional, Dict, Union, Generator, List
 from huggingface_hub import hf_hub_download
 
-from auralis.common.logging.logger import setup_logger
+from auralis.common.logging.logger import setup_logger, set_vllm_logging_level
 from auralis.common.definitions.output import TTSOutput
 from auralis.common.definitions.requests import TTSRequest
 from auralis.common.metrics.performance import track_generation
@@ -18,12 +19,13 @@ from auralis.models.base import BaseAsyncTTSEngine, AudioOutputGenerator
 
 
 class TTS:
-    def __init__(self, scheduler_max_concurrency: int = 10):
+    def __init__(self, scheduler_max_concurrency: int = 10, vllm_logging_level=logging.DEBUG):
+        set_vllm_logging_level(vllm_logging_level)
+
         self.scheduler: Optional[TwoPhaseScheduler] = TwoPhaseScheduler(scheduler_max_concurrency)
         self.tts_engine: Optional[BaseAsyncTTSEngine] = None
         self.concurrency = scheduler_max_concurrency
         self.max_vllm_memory: Optional[int] = None
-
         self.logger = setup_logger(__file__)
 
         self.loop = asyncio.new_event_loop()
