@@ -444,7 +444,7 @@ XTTSv2 Supports: English, Spanish, French, German, Italian, Portuguese, Polish, 
 Processing speeds on NVIDIA 3090:
 - Short phrases (< 100 chars): ~1 second
 - Medium texts (< 1000 chars): ~5-10 seconds
-- Full books (~100K chars): ~10 minutes
+- Full books (~500K chars @ concurrency 36): ~10 minutes
 
 Memory usage:
 - Base: ~2.5GB VRAM concurrencey = 1
