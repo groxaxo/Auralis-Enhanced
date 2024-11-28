@@ -70,7 +70,8 @@ SupportedLanguages = Literal[
         "ko",
         "ja",
         "hi",
-        "auto"
+        "auto",
+        ""
     ]
 
 @lru_cache(maxsize=1024)
