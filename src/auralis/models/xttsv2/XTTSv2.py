@@ -177,7 +177,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             model="AstraMindAI/xtts2-gpt",
             tensor_parallel_size=self.tp,
             pipeline_parallel_size=self.pp,
-            dtype="float16",
+            dtype="auto",
             max_model_len=self.gpt_config.max_text_tokens +
                           self.gpt_config.max_audio_tokens +
                           32 + 5 + 3, # this is from the xttsv2 code, 32 is the conditioning sql

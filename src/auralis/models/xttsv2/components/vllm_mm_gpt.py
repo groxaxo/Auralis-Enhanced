@@ -637,7 +637,6 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
 
         is_logits_only_mode = self._check_is_logits_only_mode(is_logits_only_mode)
 
-
         starting_sequence_start_ids, input_ids, positions = self._apply_op_to_seq_in_batch(input_ids,
                                                                                            positions,
                                                                                            cond_latents,
@@ -776,13 +775,12 @@ class GPT2Model(nn.Module):
             device=hidden_states.device, dtype=hidden_states.dtype
         )
         for idx, (inserion_idx, conditioning_input) in enumerate(zip(insertion_ids, conditioning_inputs)):
-            hidden_states = torch.cat([
+                hidden_states = torch.cat([
                 hidden_states[:inserion_idx],
                 conditioning_input.squeeze(0),
                 (start_of_generation_embed if ~is_logit_only[idx] else empty_tensor),
                 hidden_states[inserion_idx:]], dim=0
             )
-
 
         return hidden_states
 
@@ -824,7 +822,7 @@ class GPT2Model(nn.Module):
                     position_ids, input_ids.device
                 ) if not is_profiling_run else self.wpe(input_ids.reshape(-1, 1))
 
-            hidden_states = audio_inputs_embeds + position_embeds
+            hidden_states = (audio_inputs_embeds + position_embeds).view(-1, self.embed_dim)
 
             if isinstance(input_embeds, list) and len(input_embeds) > 0:
                 hidden_states = self._insert_conditioning_into_hidden_states(
@@ -833,8 +831,6 @@ class GPT2Model(nn.Module):
                     starting_sequence_embed,
                     starting_sequence_start_ids,
                     is_logit_only)
-
-            hidden_states = hidden_states.view(-1, self.embed_dim)
 
         else:
             assert intermediate_tensors is not None

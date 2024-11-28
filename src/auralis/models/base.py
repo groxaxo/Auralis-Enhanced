@@ -128,12 +128,11 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
     @staticmethod
     def get_memory_percentage(memory: int) -> Optional[float]:
         """Get memory percentage."""
-        nvmlInit()
-        for i in range(nvmlDeviceGetCount()):
-            handle = nvmlDeviceGetHandleByIndex(i)
-            info = nvmlDeviceGetMemoryInfo(handle)
-            available_memory = info.free
-            estimated_mem_occupation = memory / available_memory
+
+        for i in range(torch.cuda.device_count()):
+            free_memory, total_memory = torch.cuda.mem_get_info(i)
+            used_memory = total_memory - free_memory
+            estimated_mem_occupation = (memory+used_memory) / free_memory
             if estimated_mem_occupation < 0.9:
                 return estimated_mem_occupation
         return None

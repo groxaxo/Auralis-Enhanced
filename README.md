@@ -447,7 +447,10 @@ Processing speeds on NVIDIA 3090:
 - Full books (~100K chars): ~10 minutes
 
 Memory usage:
-- Base: ~2GB VRAM
+- Base: ~2.5GB VRAM concurrencey = 1
+- ~ 5.3GB VRAM concurrencey = 10
+
+
 
 
 ## Learn More 🔭
