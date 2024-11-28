@@ -1,10 +1,12 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import AsyncGenerator, List, Union, Tuple
+from typing import AsyncGenerator, List, Union, Tuple, Optional
 
 import torch
 import torchaudio
 from dataclasses import dataclass
+
+from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo, nvmlDeviceGetCount
 from vllm import RequestOutput
 
 from auralis.common.definitions.output import TTSOutput
@@ -118,14 +120,23 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
         """Get the current dtype of the model."""
         return next(self.parameters()).dtype
 
+    @abstractmethod
+    def get_memory_usage_curve(self):
+        """Get memory usage curve by manually testing for vllm memory usage at different concurrency."""
+        raise NotImplementedError
+
     @staticmethod
-    def get_memory_percentage(memory: int) -> float:
+    def get_memory_percentage(memory: int) -> Optional[float]:
         """Get memory percentage."""
-        total_memory = torch.cuda.get_device_properties(0).total_memory
-        reserved_memory = torch.cuda.memory_reserved(0)
-        allocated_memory = torch.cuda.memory_allocated(0)
-        available_memory = total_memory - reserved_memory - allocated_memory
-        return memory / available_memory
+        nvmlInit()
+        for i in range(nvmlDeviceGetCount()):
+            handle = nvmlDeviceGetHandleByIndex(i)
+            info = nvmlDeviceGetMemoryInfo(handle)
+            available_memory = info.free
+            estimated_mem_occupation = memory / available_memory
+            if estimated_mem_occupation < 0.9:
+                return estimated_mem_occupation
+        return None
 
     @classmethod
     def from_pretrained(

@@ -39,7 +39,7 @@ E così, grazie all'impegno di un'intera comunità, Villa Margherita continuò a
 
 speaker_file = "./female.wav"
 # Inizializza il TTS
-tts = TTS()
+tts = TTS(scheduler_max_concurrency=1)
 tts.tts_engine = XTTSv2Engine.from_pretrained("AstraMindAI/xtts2", torch_dtype=torch.float32)
 stream = True
 @pytest.mark.asyncio

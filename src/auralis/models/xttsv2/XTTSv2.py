@@ -9,6 +9,7 @@ from typing import Optional, List, Tuple, Union, AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
 
 import librosa
+import numpy as np
 import torch
 import torchaudio
 from torch import nn
@@ -43,11 +44,12 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
     def __init__(self,
                  hifi_config: XTTSConfig,
                  gpt_config: XTTSGPTConfig,
-                 max_gb_for_vllm_model: int = 2,
                  pipeline_parallel_size: int = 1,
                  tensor_parallel_size: int = 1,
                  **kwargs):
         super().__init__()
+
+        self.max_gb_for_vllm_model = None
 
         self.logger = setup_logger(__file__)
         self.logger.info("Initializing XTTSv2Engine...")
@@ -62,10 +64,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.request_counter = Counter()
 
         self.max_concurrency = kwargs.get('max_concurrency', 10)
-        semaphore_concurrency = self.max_concurrency
+        semaphore_concurrency = max(1,self.max_concurrency // 6)
         self.executor = ThreadPoolExecutor(max_workers=semaphore_concurrency)  # For CPU-bound tasks
-
-        self.max_gb_for_vllm_model = max_gb_for_vllm_model
 
         # Register buffer before creating modules
         self.register_buffer("mel_stats", torch.ones(80))
@@ -119,6 +119,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         # Kept for model loading purposes
         self.text_head = nn.Linear(gpt_config.hidden_size, gpt_config.number_text_tokens, bias=True)
 
+        self.get_memory_usage_curve()
+
         # Initialize VLLM engine at the end, settings its concurrency
         self.init_vllm_engine(self.max_concurrency)
 
@@ -126,6 +128,19 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.encoder_semaphore = asyncio.BoundedSemaphore(semaphore_concurrency)
         self.decoder_semaphore = asyncio.BoundedSemaphore(semaphore_concurrency) # empirically found a good value
         self.eval()
+
+    def get_memory_usage_curve(self):
+        # empirically found values
+        x = np.array([2, 5, 10, 16])
+        y = np.array([1.25, 1.35, 1.45, 1.625])
+
+        # polynomial fit
+        coefficients = np.polyfit(x, y, 2)
+
+        # create a polynomial object
+        self.max_gb_for_vllm_model = (coefficients[0] * self.max_concurrency ** 2 +
+                    coefficients[1] * self.max_concurrency +
+                    coefficients[2])
 
     @property
     def conditioning_config(self) -> ConditioningConfig:
@@ -155,15 +170,18 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
     def init_vllm_engine(self, concurrency):
         """Initialize models with AsyncVLLMEngine."""
         max_seq_num = concurrency
+        mem_utils = self.get_memory_percentage(self.max_gb_for_vllm_model * 1024 ** 3) #
+        if not mem_utils:
+            raise RuntimeError("Could not find the memory usage for the VLLM model initialization.")
         engine_args = AsyncEngineArgs(
             model="AstraMindAI/xtts2-gpt",
             tensor_parallel_size=self.tp,
             pipeline_parallel_size=self.pp,
-            dtype="auto",
+            dtype="float16",
             max_model_len=self.gpt_config.max_text_tokens +
                           self.gpt_config.max_audio_tokens +
                           32 + 5 + 3, # this is from the xttsv2 code, 32 is the conditioning sql
-            gpu_memory_utilization=self.get_memory_percentage(self.max_gb_for_vllm_model * 1024 ** 3),
+            gpu_memory_utilization=mem_utils,
             trust_remote_code=True,
             enforce_eager=True,
             limit_mm_per_prompt={"audio": 1}, # even if more audio are present, they'll be condendesed into one
@@ -216,7 +234,6 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             gpt_config=gpt_config,
             tensor_parallel_size=tensor_parallel_size,
             pipeline_parallel_size=pipeline_parallel_size,
-            max_gb_for_vllm_model=kwargs.get('max_vllm_memory', 2),
             **kwargs
         )
 

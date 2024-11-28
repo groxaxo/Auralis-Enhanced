@@ -15,7 +15,6 @@ from auralis.common.definitions.requests import TTSRequest
 from auralis.common.metrics.performance import track_generation
 from auralis.common.scheduling.two_phase_scheduler import TwoPhaseScheduler
 from auralis.models.base import BaseAsyncTTSEngine, AudioOutputGenerator
-from hf_converted_files.deault_tts import gpt_cond_latent
 
 
 class TTS:
@@ -24,7 +23,7 @@ class TTS:
         self.tts_engine: Optional[BaseAsyncTTSEngine] = None
         self.concurrency = scheduler_max_concurrency
         self.max_vllm_memory: Optional[int] = None
-        self.set_vllm_memory(scheduler_max_concurrency)
+
         self.logger = setup_logger(__file__)
 
         self.loop = asyncio.new_event_loop()
@@ -37,20 +36,6 @@ class TTS:
         self.loop.run_forever()
 
 
-    def set_vllm_memory(self, scheduler_max_concurrency: int):
-        """Set VLLM memory based on concurrency."""
-        match scheduler_max_concurrency:
-            case n if n <= 10:
-                self.max_vllm_memory = 7
-            case n if n <= 20:
-                self.max_vllm_memory = 3.2
-            case n if n <= 30:
-                self.max_vllm_memory = 3.75
-            case n if n <= 40:
-                self.max_vllm_memory = 4.3
-            case _:
-                self.max_vllm_memory = 6
-
     def from_pretrained(self, model_name_or_path: str, **kwargs):
         """Load a pretrained model."""
         from auralis.models.registry import MODEL_REGISTRY
@@ -59,7 +44,6 @@ class TTS:
             config_path = hf_hub_download(repo_id=model_name_or_path, filename='config.json')
             with open(config_path, 'r') as f:
                 config = json.load(f)
-            kwargs['max_vllm_memory'] = self.max_vllm_memory
             kwargs['max_concurrency'] = self.concurrency
 
             self.tts_engine = MODEL_REGISTRY[config['model_type']].from_pretrained(model_name_or_path, **kwargs)
@@ -80,7 +64,9 @@ class TTS:
         conditioning_config = self.tts_engine.conditioning_config
         input_request.start_time = time.time()
         if input_request.context_partial_function:
-            audio_token_generators, request_ids, gpt_like_decoder_conditioning = \
+            (audio_token_generators, requests_ids,
+             speaker_embeddings,
+             gpt_like_decoder_conditioning) = \
                 await input_request.context_partial_function(input_request)
         else:
             audio_token_generators, speaker_embeddings, gpt_like_decoder_conditioning = None, None, None
