@@ -13,7 +13,7 @@ import os
 # Initialize colorama
 colorama.init()
 
-VLLM_LOGGER_LEVEL: logging
+VLLM_LOGGER_LEVEL = logging.INFO
 
 class VLLMLogOverrider:
     """Override VLLM loggers to use custom formatting"""
@@ -176,5 +176,7 @@ def set_vllm_logging_level(level: logging):
     Args:
         level: Logging level to set (e.g., logging.INFO, logging.ERROR)
     """
-    global VLLM_LOGGER_LEVEL
-    VLLM_LOGGER_LEVEL = level
+    for name in logging.root.manager.loggerDict:
+        if name.startswith('vllm'):
+            vllm_logger = logging.getLogger(name)
+            vllm_logger.setLevel(level)
