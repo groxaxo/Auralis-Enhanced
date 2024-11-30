@@ -14,7 +14,11 @@ Auralis is a text-to-speech engine that makes voice generation practical for rea
 - Stream long texts piece by piece
 
 ## Quick Start ⭐
-
+first install the package via
+```python
+pip install auralis
+```
+and then you try it out
 ```python
 from auralis import TTS, TTSRequest
 
