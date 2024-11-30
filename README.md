@@ -2,7 +2,7 @@
 
 # Auralis 🌌 (/auˈralis/)
 
-Transform text into natural speech at warp speed. Process an entire novel in minutes, not hours.
+Transform text into natural speech (with voice cloning) at warp speed. Process an entire novel in minutes, not hours.
 
 ## What is Auralis? 🚀
 
