@@ -54,13 +54,14 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.logger = setup_logger(__file__)
         self.logger.info("Initializing XTTSv2Engine...")
 
+        self.gpt_model = kwargs['gpt_model']
         self.hifi_config = hifi_config
         self.gpt_config = gpt_config
         self.mel_bos_token_id = gpt_config.start_audio_token
         self.mel_eos_token_id = gpt_config.stop_audio_token
         self.tp = tensor_parallel_size
         self.pp = pipeline_parallel_size
-        self.tokenizer = XTTSTokenizerFast.from_pretrained("AstraMindAI/xtts2-gpt")
+        self.tokenizer = XTTSTokenizerFast.from_pretrained(self.gpt_model)
         self.request_counter = Counter()
 
         self.max_concurrency = kwargs.get('max_concurrency', 10)
@@ -174,7 +175,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         if not mem_utils:
             raise RuntimeError("Could not find the memory usage for the VLLM model initialization.")
         engine_args = AsyncEngineArgs(
-            model="AstraMindAI/xtts2-gpt",
+            model=self.gpt_model,
             tensor_parallel_size=self.tp,
             pipeline_parallel_size=self.pp,
             dtype="auto",

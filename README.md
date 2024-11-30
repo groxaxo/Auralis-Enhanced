@@ -50,6 +50,18 @@ output.save('hello.wav')
 - Speech clarity enhancement
 - Volume normalization
 
+## XTTSv2 Finetunes
+
+You can use your own XTTSv2 finetunes by simply converting them from the standard coqui checkpoint format to our safetensor format. Use [this script](https://github.com/astramind-ai/Auralis/blob/main/src/auralis/models/xttsv2/utils/checkpoint_converter.py):
+```commandline
+python checkpoint_converter.py path/to/checkpoint.pth --output_dir path/to/output
+```
+
+it will create two folders, one with the core xttsv2 checkppoint and one with the gtp2 component. Then create a TTS instance with 
+```python
+tts = TTS().from_pretrained("som/core-xttsv2_model", gpt_model='some/xttsv2-gpt_model')
+```
+
 ## Examples & Usage 🚀
 
 ### Basic Examples ⭐
