@@ -61,7 +61,7 @@ You can use your own XTTSv2 finetunes by simply converting them from the standar
 python checkpoint_converter.py path/to/checkpoint.pth --output_dir path/to/output
 ```
 
-it will create two folders, one with the core xttsv2 checkppoint and one with the gtp2 component. Then create a TTS instance with 
+it will create two folders, one with the core xttsv2 checkpoint and one with the gtp2 component. Then create a TTS instance with 
 ```python
 tts = TTS().from_pretrained("som/core-xttsv2_model", gpt_model='some/xttsv2-gpt_model')
 ```
