@@ -23,7 +23,7 @@ and then you try it out
 from auralis import TTS, TTSRequest
 
 # Initialize
-tts = TTS().from_pretrained('AstraMindAI/xtts2-gpt')
+tts = TTS().from_pretrained('AstraMindAI/xttsv2')
 
 # Generate speech
 request = TTSRequest(
