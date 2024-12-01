@@ -24,7 +24,7 @@ and then you try it out
 from auralis import TTS, TTSRequest
 
 # Initialize
-tts = TTS().from_pretrained('AstraMindAI/xttsv2')
+tts = TTS().from_pretrained("AstraMindAI/xttsv2", gpt_model='AstraMindAI/xtts2-gpt')
 
 # Generate speech
 request = TTSRequest(
@@ -78,8 +78,7 @@ tts = TTS().from_pretrained("som/core-xttsv2_model", gpt_model='some/xttsv2-gpt_
 from auralis import TTS, TTSRequest
 
 # Initialize
-tts = TTS().from_pretrained('AstraMindAI/xtts2-gpt')
-
+tts = TTS().from_pretrained("AstraMindAI/xttsv2", gpt_model='AstraMindAI/xtts2-gpt')
 # Basic generation
 request = TTSRequest(
     text="Hello Earth! This is Auralis speaking.",
@@ -227,7 +226,7 @@ import asyncio
 from auralis import TTS, TTSRequest
 
 async def generate_speech():
-    tts = TTS().from_pretrained('AstraMindAI/xtts2-gpt')
+    tts = TTS().from_pretrained("AstraMindAI/xttsv2", gpt_model='AstraMindAI/xtts2-gpt')
     
     request = TTSRequest(
         text="Async generation example",
@@ -246,7 +245,7 @@ asyncio.run(generate_speech())
 
 ```python
 async def generate_parallel():
-    tts = TTS().from_pretrained('AstraMindAI/xtts2-gpt')
+    tts = TTS().from_pretrained("AstraMindAI/xttsv2", gpt_model='AstraMindAI/xtts2-gpt')
     
     # Create multiple requests
     requests = [
@@ -278,7 +277,7 @@ asyncio.run(generate_parallel())
 
 ```python
 async def stream_multiple_texts():
-    tts = TTS().from_pretrained('AstraMindAI/xtts2-gpt')
+    tts = TTS().from_pretrained("AstraMindAI/xttsv2", gpt_model='AstraMindAI/xtts2-gpt')
     
     # Prepare streaming requests
     texts = [
