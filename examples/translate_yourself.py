@@ -1,6 +1,6 @@
 from auralis import TTS, TTSRequest
 
-tts = TTS().from_pretrained("AstraMindAI/xttsv2", gpt_model='AstraMindAI/xtts2-gpt')
+tts = TTS(scheduler_max_concurrency=12).from_pretrained("AstraMindAI/xttsv2", gpt_model='AstraMindAI/xtts2-gpt')
 
 request = TTSRequest(
     text="愛しい彼女へ "
