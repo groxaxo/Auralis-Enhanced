@@ -2,13 +2,14 @@
 
 # Auralis 🌌 (/auˈralis/)
 
-Transform text into natural speech at warp speed. Process an entire novel in minutes, not hours.
+Transform text into natural speech (with voice cloning) at warp speed. Process an entire novel in minutes, not hours.
 
 ## What is Auralis? 🚀
 
 Auralis is a text-to-speech engine that makes voice generation practical for real-world use:
 
 - Convert the entire first Harry Potter book to speech in 10 minutes
+- Automatically enhance the reference quality, you can register them even with a low quality mic!
 - It can be configured to have a small memory footprint (scheduler_max_concurrency)
 - Process multiple requests simultaneously
 - Stream long texts piece by piece
@@ -23,7 +24,7 @@ and then you try it out
 from auralis import TTS, TTSRequest
 
 # Initialize
-tts = TTS().from_pretrained('AstraMindAI/xtts2-gpt')
+tts = TTS().from_pretrained("AstraMindAI/xttsv2", gpt_model='AstraMindAI/xtts2-gpt')
 
 # Generate speech
 request = TTSRequest(
@@ -61,7 +62,7 @@ You can use your own XTTSv2 finetunes by simply converting them from the standar
 python checkpoint_converter.py path/to/checkpoint.pth --output_dir path/to/output
 ```
 
-it will create two folders, one with the core xttsv2 checkppoint and one with the gtp2 component. Then create a TTS instance with 
+it will create two folders, one with the core xttsv2 checkpoint and one with the gtp2 component. Then create a TTS instance with 
 ```python
 tts = TTS().from_pretrained("som/core-xttsv2_model", gpt_model='some/xttsv2-gpt_model')
 ```
@@ -77,8 +78,7 @@ tts = TTS().from_pretrained("som/core-xttsv2_model", gpt_model='some/xttsv2-gpt_
 from auralis import TTS, TTSRequest
 
 # Initialize
-tts = TTS().from_pretrained('AstraMindAI/xtts2-gpt')
-
+tts = TTS().from_pretrained("AstraMindAI/xttsv2", gpt_model='AstraMindAI/xtts2-gpt')
 # Basic generation
 request = TTSRequest(
     text="Hello Earth! This is Auralis speaking.",
@@ -226,7 +226,7 @@ import asyncio
 from auralis import TTS, TTSRequest
 
 async def generate_speech():
-    tts = TTS().from_pretrained('AstraMindAI/xtts2-gpt')
+    tts = TTS().from_pretrained("AstraMindAI/xttsv2", gpt_model='AstraMindAI/xtts2-gpt')
     
     request = TTSRequest(
         text="Async generation example",
@@ -245,7 +245,7 @@ asyncio.run(generate_speech())
 
 ```python
 async def generate_parallel():
-    tts = TTS().from_pretrained('AstraMindAI/xtts2-gpt')
+    tts = TTS().from_pretrained("AstraMindAI/xttsv2", gpt_model='AstraMindAI/xtts2-gpt')
     
     # Create multiple requests
     requests = [
@@ -277,7 +277,7 @@ asyncio.run(generate_parallel())
 
 ```python
 async def stream_multiple_texts():
-    tts = TTS().from_pretrained('AstraMindAI/xtts2-gpt')
+    tts = TTS().from_pretrained("AstraMindAI/xttsv2", gpt_model='AstraMindAI/xtts2-gpt')
     
     # Prepare streaming requests
     texts = [
@@ -463,7 +463,7 @@ Processing speeds on NVIDIA 3090:
 - Full books (~500K chars @ concurrency 36): ~10 minutes
 
 Memory usage:
-- Base: ~2.5GB VRAM concurrencey = 1
+- Base: ~2.5GB VRAM concurrency = 1
 - ~ 5.3GB VRAM concurrency = 20
 
 

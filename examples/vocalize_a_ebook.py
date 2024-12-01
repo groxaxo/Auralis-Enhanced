@@ -87,12 +87,12 @@ def process_multiple_epubs(input_folder, output_folder):
                 print(f"Error processing {filename}: {str(e)}")
 
 def main():
-    text = extract_text_from_epub("yourbook.epub")
+    text = extract_text_from_epub("book.epub")
 
-    speaker_file = '../tests/resources/audio_samples/female.wav'
+    speaker_file = 'sample_voice.wav'
     # Initialize the engine, you can experiment with the scheduler_max_concurrency parameter to optimize the performance
     tts = TTS(
-        scheduler_max_concurrency=36).from_pretrained("AstraMindAI/xttsv2")
+        scheduler_max_concurrency=12).from_pretrained("AstraMindAI/xttsv2", gpt_model="AstraMindAI/xtts2-gpt")
     req = TTSRequest(
             text=text,
             language="auto",
