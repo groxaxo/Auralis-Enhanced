@@ -1,8 +1,8 @@
 ---
-name: Model Architecture Request Template
+name: New Model Request Template
 about: A new, non existant model addition
-title: "[\U0001F9BENEW ARCHITECTURE]"
-labels: ''
+title: "[\U0001F9BENEW MODEL]"
+labels: 'new_model'
 assignees: ''
 
 ---
