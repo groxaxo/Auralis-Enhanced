@@ -8,7 +8,7 @@ Transform text into natural speech (with voice cloning) at warp speed. Process a
 
 Auralis is a text-to-speech engine that makes voice generation practical for real-world use:
 
-- Convert the entire first Harry Potter book to speech in 10 minutes
+- Convert the entire first Harry Potter book to speech in 10 minutes (**realtime factor of ≈ 0.02x!** )
 - Automatically enhance the reference quality, you can register them even with a low quality mic!
 - It can be configured to have a small memory footprint (scheduler_max_concurrency)
 - Process multiple requests simultaneously
