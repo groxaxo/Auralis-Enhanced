@@ -15,10 +15,22 @@ Auralis is a text-to-speech engine that makes voice generation practical for rea
 - Stream long texts piece by piece
 
 ## Quick Start ⭐
-first install the package via
-```python
-pip install auralis
-```
+
+1. Create a new Conda environment:
+   ```bash
+   conda create -n auralis_env python=3.10 -y
+   ```
+
+2. Activate the environment:
+   ```bash
+   conda activate auralis_env
+   ```
+
+3. Install Auralis:
+   ```bash
+   pip install auralis
+   ```
+
 and then you try it out
 ```python
 from auralis import TTS, TTSRequest
