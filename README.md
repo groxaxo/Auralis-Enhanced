@@ -8,18 +8,31 @@ Transform text into natural speech (with voice cloning) at warp speed. Process a
 
 Auralis is a text-to-speech engine that makes voice generation practical for real-world use:
 
-- Convert the entire first Harry Potter book to speech in 10 minutes
+- Convert the entire first Harry Potter book to speech in 10 minutes (**realtime factor of ≈ 0.02x!** )
 - Automatically enhance the reference quality, you can register them even with a low quality mic!
 - It can be configured to have a small memory footprint (scheduler_max_concurrency)
 - Process multiple requests simultaneously
 - Stream long texts piece by piece
 
 ## Quick Start ⭐
-first install the package via
-```python
-pip install auralis
-```
-and then you try it out via **python**
+
+1. Create a new Conda environment:
+   ```bash
+   conda create -n auralis_env python=3.10 -y
+   ```
+
+2. Activate the environment:
+   ```bash
+   conda activate auralis_env
+   ```
+
+3. Install Auralis:
+   ```bash
+   pip install auralis
+   ```
+
+and then you can try it out via **python**
+
 ```python
 from auralis import TTS, TTSRequest
 
@@ -36,7 +49,7 @@ output = tts.generate_speech(request)
 output.save('hello.wav')
 ```
 
-or via **cli**
+or via **cli** using the openai compatible server
 ```commandline
 auralis.openai --host 127.0.0.1 --port 8000 --model AstraMindAI/xttsv2 --gpt_model AstraMindAI/xtts2-gpt --max_concurrency 8 --vllm_logging_level warn  
 ```
