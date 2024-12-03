@@ -1,9 +1,11 @@
+import os
 import argparse
 
 import requests
 import torch
 from safetensors.torch import save_file
-import os
+from huggingface_hub import snapshot_download
+
 
 def download_repo_files(repo_id, output_path, exclude_extensions=['.safetensors']):
     """
@@ -18,42 +20,11 @@ def download_repo_files(repo_id, output_path, exclude_extensions=['.safetensors'
     if not os.path.exists(output_path):
         os.makedirs(output_path)
 
-    # GitHub API endpoint for repository contents
-    api_url = f"https://api.github.com/repos/{repo_id}/contents"
-
-    try:
-        # Get repository contents
-        response = requests.get(api_url)
-        response.raise_for_status()
-        contents = response.json()
-
-        # Download each file
-        for item in contents:
-            if item['type'] == 'file':
-                # Skip files with excluded extensions
-                if not any(item['name'].endswith(ext) for ext in exclude_extensions):
-                    # Get the download URL
-                    download_url = item['download_url']
-                    if download_url:
-                        print(f"Downloading {item['name']}...")
-
-                        # Download the file
-                        file_response = requests.get(download_url)
-                        file_response.raise_for_status()
-
-                        # Save the file
-                        file_path = os.path.join(output_path, item['name'])
-                        with open(file_path, 'wb') as f:
-                            f.write(file_response.content)
-                        print(f"Successfully downloaded {item['name']}")
-                else:
-                    print(f"Skipping {item['name']} (excluded extension)")
-
-    except requests.exceptions.RequestException as e:
-        print(f"Error downloading files: {e}")
+    snapshot_download(repo_id=repo_id, ignore_patterns=exclude_extensions, local_dir=output_path)
 
 
-def convert_checkpoint(pytorch_checkpoint_path, output_dir):
+
+def convert_checkpoint(pytorch_checkpoint_path, output_dir, args):
     """
     Convert PyTorch checkpoint to SafeTensors format, mapping weights to GPT2 or XTTSv2 models
     based on specific substrings.
@@ -64,6 +35,8 @@ def convert_checkpoint(pytorch_checkpoint_path, output_dir):
     """
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(os.path.join(output_dir, "gpt"), exist_ok=True)
+    os.makedirs(os.path.join(output_dir, "core_xttsv2"), exist_ok=True)
 
     # Load PyTorch checkpoint
     checkpoint = torch.load(pytorch_checkpoint_path, map_location='cpu', weights_only=False) # to avoid warning
@@ -111,6 +84,7 @@ def convert_checkpoint(pytorch_checkpoint_path, output_dir):
     assert all(any(substr in key for key in gpt2_weights.keys()) for substr in gpt2_substrings), \
         f"Missing substrings: {[substr for substr in gpt2_substrings if not any(substr in key for key in gpt2_weights.keys())]}"
 
+
     gpt2_path = os.path.join(output_dir, "gpt", 'gpt2_model.safetensors')
     save_file(gpt2_weights, gpt2_path)
     download_repo_files("AstraMindAI/xtts2-gpt", os.path.join(output_dir, "gpt"))
@@ -139,7 +113,7 @@ def main():
         return
 
     # Convert the checkpoint
-    convert_checkpoint(args.checkpoint_path, args.output_dir)
+    convert_checkpoint(args.checkpoint_path, args.output_dir, args)
 
 if __name__ == '__main__':
     main()
