@@ -18,7 +18,7 @@ class TTSOutput:
     """Container for TTS inference output with integrated audio utilities"""
     array: Union[np.ndarray, bytes]
     sample_rate: int = 24000
-    bit_depth: int = 16
+    bit_depth: int = 32
     bit_rate: int = 192 # kbps
     compression: int = 10 #
     channel: int = 1
