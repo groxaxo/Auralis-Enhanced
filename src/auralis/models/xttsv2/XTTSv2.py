@@ -54,7 +54,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.logger = setup_logger(__file__)
         self.logger.info("Initializing XTTSv2Engine...")
 
-        self.gpt_model = kwargs['gpt_model']
+        self.gpt_model = kwargs.pop('gpt_model')
         self.hifi_config = hifi_config
         self.gpt_config = gpt_config
         self.mel_bos_token_id = gpt_config.start_audio_token
@@ -64,8 +64,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.tokenizer = XTTSTokenizerFast.from_pretrained(self.gpt_model)
         self.request_counter = Counter()
 
-        self.max_concurrency = kwargs.get('max_concurrency', 10)
-        semaphore_concurrency = max(1,self.max_concurrency // 6)
+        self.max_concurrency = kwargs.pop('max_concurrency', 10)
+        semaphore_concurrency = max(1,self.max_concurrency // 6) * self.tp
         self.executor = ThreadPoolExecutor(max_workers=semaphore_concurrency)  # For CPU-bound tasks
 
         # Register buffer before creating modules
@@ -333,7 +333,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
     async def get_conditioning_latents(
             self,
-            audio_path,
+            audio_reference,
             max_ref_length=30,
             gpt_cond_len=6,
             gpt_cond_chunk_len=6,
@@ -343,12 +343,14 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
     ):
         """Get the conditioning latents for the GPT model from the given audio."""
         # Deal with multiple references
-        assert isinstance(audio_path, str) or isinstance(audio_path, list), "audio_path must be a string or a list."
+        assert (isinstance(audio_reference, bytes) or
+                isinstance(audio_reference, str) or
+                isinstance(audio_reference, list)), f"audio_reference must be a string, byte or a list but it is {type(audio_reference)}"
 
-        if not isinstance(audio_path, list):
-            audio_paths = [audio_path]
+        if not isinstance(audio_reference, list):
+            audio_paths = [audio_reference]
         else:
-            audio_paths = audio_path
+            audio_paths = audio_reference
 
         speaker_embeddings = []
         audios = []
@@ -465,9 +467,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         """Async version of get_conditioning_latents with concurrency control."""
         async with self.encoder_semaphore:
             # Run the original get_conditioning_latents in executor
-            result = await asyncio.get_event_loop().run_in_executor(
-                self.executor,
-                self.get_conditioning_latents,
+            result = await self.get_conditioning_latents(
                 audio_reference,
                 max_ref_length,
                 gpt_cond_len,
@@ -476,7 +476,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 sound_norm_refs,
                 load_sr
             )
-            return await result
+            return result
 
     async def get_model_logits(
             self,
@@ -547,7 +547,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                                      gpt_cond_latent: Optional[torch.Tensor] = None,
                                      speaker_embeddings: Optional[torch.Tensor] = None,
                                      ) -> TokenGeneratorsAndPossiblyConditioning:
-        if not gpt_cond_latent or not speaker_embeddings:
+        if gpt_cond_latent is None or speaker_embeddings is None:
             # Prepare input with conditioning
             tokens_list, gpt_embed_inputs, speaker_embeddings = await self.prepare_inputs_async(
                 request.text,

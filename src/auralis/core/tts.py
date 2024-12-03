@@ -56,7 +56,7 @@ class TTS:
     async def prepare_for_streaming_generation(self, request: TTSRequest):
         conditioning_config = self.tts_engine.conditioning_config
         if conditioning_config.speaker_embeddings or conditioning_config.gpt_like_decoder_conditioning:
-            gpt_cond_latent, speaker_embeddings = await self.tts_engine.get_audio_conditioning(request)
+            gpt_cond_latent, speaker_embeddings = await self.tts_engine.get_audio_conditioning(request.speaker_files)
             return partial(self.tts_engine.get_generation_context,
                            gpt_cond_latent=gpt_cond_latent,
                            speaker_embeddings=speaker_embeddings)

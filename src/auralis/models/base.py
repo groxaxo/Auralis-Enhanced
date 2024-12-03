@@ -132,8 +132,8 @@ class BaseAsyncTTSEngine(ABC, torch.nn.Module):
         for i in range(torch.cuda.device_count()):
             free_memory, total_memory = torch.cuda.mem_get_info(i)
             used_memory = total_memory - free_memory
-            estimated_mem_occupation = (memory+used_memory) / free_memory
-            if estimated_mem_occupation < 0.9:
+            estimated_mem_occupation = (memory + used_memory) / total_memory
+            if estimated_mem_occupation > 0 and estimated_mem_occupation < 1:
                 return estimated_mem_occupation
         return None
 

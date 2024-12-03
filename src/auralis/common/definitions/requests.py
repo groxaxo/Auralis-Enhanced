@@ -1,3 +1,4 @@
+import io
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,6 +15,7 @@ from functools import lru_cache
 from dataclasses import asdict
 
 import torch
+import torchaudio
 from cachetools import LRUCache
 
 
@@ -96,7 +98,7 @@ class TTSRequest:
     # Request metadata
     text: Union[AsyncGenerator[str, None], str, List[str]]
 
-    speaker_files: Union[List[str], bytes]  # Path to the speaker audio file
+    speaker_files: Union[Union[str,List[str]], Union[bytes,List[bytes]]]
     context_partial_function: Optional[Callable] = None
 
     start_time: Optional[float] = None
@@ -123,6 +125,7 @@ class TTSRequest:
     do_sample: bool = True
 
     def __post_init__(self):
+
         if self.language == 'auto' and len(self.text) > 0:
             self.language = get_language(self.text)
 
@@ -132,25 +135,28 @@ class TTSRequest:
             self.speaker_files = [self.preprocess_audio(f, self.audio_config) for f in self.speaker_files]
 
     def infer_language(self):
-        if self.language == '':
+        if self.language == 'auto':
             self.language = get_language(self.text)
 
     @cached_processing()
-    def preprocess_audio(self, audio_path: str, audio_config: AudioPreprocessingConfig) -> str:
+    def preprocess_audio(self, audio_source: Union[str, bytes], audio_config: AudioPreprocessingConfig) -> str:
         try:
             temp_dir = Path("/tmp/auralis")
             temp_dir.mkdir(exist_ok=True)
-            audio_path = Path(audio_path)
-            audio, sr = librosa.load(audio_path, sr=self.audio_config.sample_rate)
+            if isinstance(audio_source, str):
+                audio_source = Path(audio_source)
+            audio, sr = librosa.load(io.BytesIO(audio_source), sr=self.audio_config.sample_rate)
             processed = self.processor.process(audio)
 
-            output_path = temp_dir / f"{audio_path.stem}{uuid.uuid4().hex}{audio_path.suffix}"
+            output_path = temp_dir / (f"{hash(audio_source) if isinstance(audio_source, bytes) else audio_source.stem}"
+                                      f"{uuid.uuid4().hex}"
+                                      f"{'.wav' if isinstance(audio_source, bytes) else audio_source.suffix}")
             sf.write(output_path, processed, sr)
             return str(output_path)
 
         except Exception as e:
             print(f"Error processing audio: {e}. Using original file.")
-            return audio_path
+            return audio_source
 
     def copy(self):
 

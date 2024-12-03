@@ -1,6 +1,4 @@
-import os
 import re
-import textwrap
 from typing import List, Optional, Union, Dict, Any
 from functools import cached_property
 
@@ -20,7 +18,7 @@ from tokenizers import Tokenizer
 from tokenizers.pre_tokenizers import WhitespaceSplit
 from tokenizers.processors import TemplateProcessing
 
-from ..components.tts.layers.xtts.zh_num2words import TextNorm as zh_num2words
+from auralis.models.xttsv2.components.tts.layers.xtts.zh_num2words import TextNorm as zh_num2words
 
 import cutlet
 

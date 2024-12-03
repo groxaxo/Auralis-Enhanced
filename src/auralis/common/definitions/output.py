@@ -15,11 +15,20 @@ import torchaudio
 @dataclass
 class TTSOutput:
     """Container for TTS inference output with integrated audio utilities"""
-    array: np.ndarray
+    array: Union[np.ndarray, bytes]
     sample_rate: int = 24000
     start_time: Optional[float] = None
     end_time: Optional[float] = None
     token_length: Optional[int] = None
+
+    def __post_init__(self):
+        if isinstance(self.array, bytes):
+            self.array = np.frombuffer(self.array, dtype=np.int16)
+            #normalize in the range
+            self.array = self.array.astype(np.float32) / 32768.0
+            fade_length = 100
+            fade_in = np.linspace(0, 1, fade_length)
+            self.array[:fade_length] *= fade_in
 
     def change_speed(self, speed_factor: float) -> 'TTSOutput':
         """
@@ -122,7 +131,7 @@ class TTSOutput:
             Audio data as bytes
         """
         # Convert to tensor if needed
-        wav_tensor = self.to_tensor()
+        wav_tensor = self.to_tensor().to(torch.float32)
 
         # Ensure correct shape (1, N) for torchaudio
         if wav_tensor.dim() == 1:

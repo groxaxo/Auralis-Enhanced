@@ -25,6 +25,11 @@ setup(
     url='https://github.com/astramind.ai/auralis',
     package_dir={'': 'src'},
     packages=find_packages(where='src'),
+    entry_points={
+            'console_scripts': [
+                'auralis.openai=auralis.entrypoints.openai:main',
+            ],
+        },
     install_requires=[
         "aiofiles==24.1.0",
         "beautifulsoup4==4.12.3",
