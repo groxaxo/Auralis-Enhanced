@@ -1,6 +1,7 @@
 import io
 import uuid
-from dataclasses import dataclass, field
+
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Union, AsyncGenerator, Optional, List, Literal, get_args, Callable
 
@@ -12,10 +13,8 @@ import functools
 import hashlib
 import json
 from functools import lru_cache
-from dataclasses import asdict
+from dataclasses import asdict, field
 
-import torch
-import torchaudio
 from cachetools import LRUCache
 
 
@@ -103,7 +102,6 @@ class TTSRequest:
 
     start_time: Optional[float] = None
     enhance_speech: bool = True
-    from_stream: bool = False
     audio_config: AudioPreprocessingConfig = field(default_factory=AudioPreprocessingConfig)
     language: SupportedLanguages = "auto"
     request_id: str = field(default_factory=lambda: uuid.uuid4().hex)
@@ -145,7 +143,9 @@ class TTSRequest:
             temp_dir.mkdir(exist_ok=True)
             if isinstance(audio_source, str):
                 audio_source = Path(audio_source)
-            audio, sr = librosa.load(io.BytesIO(audio_source), sr=self.audio_config.sample_rate)
+                audio, sr = librosa.load(audio_source, sr=self.audio_config.sample_rate)
+            else:
+                audio, sr = librosa.load(io.BytesIO(audio_source), sr=self.audio_config.sample_rate)
             processed = self.processor.process(audio)
 
             output_path = temp_dir / (f"{hash(audio_source) if isinstance(audio_source, bytes) else audio_source.stem}"

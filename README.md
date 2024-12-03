@@ -19,7 +19,7 @@ first install the package via
 ```python
 pip install auralis
 ```
-and then you try it out
+and then you try it out via **python**
 ```python
 from auralis import TTS, TTSRequest
 
@@ -35,6 +35,12 @@ request = TTSRequest(
 output = tts.generate_speech(request)
 output.save('hello.wav')
 ```
+
+or via **cli**
+```commandline
+auralis.openai --host 127.0.0.1 --port 8000 --model AstraMindAI/xttsv2 --gpt_model AstraMindAI/xtts2-gpt --max_concurrency 8 --vllm_logging_level warn  
+```
+You can see [here](https://github.com/astramind-ai/Auralis/tree/main/docs/USING_OAI_SERVER.md) for a more in-depth explanation or try it out with this [example](https://github.com/astramind-ai/Auralis/tree/main/examples/use_openai_server.py)
 
 ## Key Features 🛸
 
@@ -144,8 +150,12 @@ request = TTSRequest(
 output = TTSOutput.from_file("input.wav")
 
 # Format conversion
+output.bit_depth = 32
+output.channel = 2
 tensor_audio = output.to_tensor()
 audio_bytes = output.to_bytes()
+
+
 
 # Audio processing
 resampled = output.resample(target_sr=44100)

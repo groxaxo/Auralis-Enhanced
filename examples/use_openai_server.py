@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import requests
 import base64
 import json
@@ -88,9 +90,6 @@ def process_stream_response(url: str, headers: dict, payload: dict):
 def process_stream_with_openai(
         client: OpenAI,
         model: str,
-        speaker_data: str,
-        llm_runtime_url: str,
-        vocalize_every_n_words: int,
         prompt: str,
         auralis_params: dict = None
 ):
@@ -100,33 +99,10 @@ def process_stream_with_openai(
     Args:
         client: OpenAI client instance
         model: Model to use for text generation
-        speaker_data: Base64 encoded audio data for voice cloning
-        llm_runtime_url: URL of the LLM endpoint
-        vocalize_every_n_words: Number of words after which to generate audio
         prompt: Text prompt for generation
         auralis_params: Optional dictionary of Auralis-specific parameters
     """
     audio_player = AudioPlayer()
-
-    # Default Auralis parameters
-    default_auralis_params = {
-        'auralis_enhance_speech': True,
-        'auralis_sound_norm_refs': False,
-        'auralis_max_ref_length': 60,
-        'auralis_gpt_cond_len': 30,
-        'auralis_gpt_cond_chunk_len': 4,
-        'auralis_temperature': 0.75,
-        'auralis_top_p': 0.85,
-        'auralis_top_k': 50,
-        'auralis_repetition_penalty': 5.0,
-        'auralis_length_penalty': 1.0,
-        'auralis_do_sample': True,
-        'auralis_language': "auto"
-    }
-
-    # Update defaults with any provided parameters
-    if auralis_params:
-        default_auralis_params.update(auralis_params)
 
     try:
         # Start Auralis request
@@ -134,11 +110,9 @@ def process_stream_with_openai(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             stream=True,
+            modalities=['text', 'audio'],
             extra_body={
-                'openai_api_url': llm_runtime_url,
-                "speaker_files": [speaker_data],
-                'vocalize_at_every_n_words': vocalize_every_n_words,
-                **default_auralis_params  # Include all Auralis parameters
+                **auralis_params  # Include all Auralis parameters
             }
         )
 
@@ -156,50 +130,61 @@ def process_stream_with_openai(
     finally:
         audio_player.stop()
 
-
-
-if __name__ == "__main__":
-    # Read reference audio
-    with open("../resources/audio_samples/female.wav", "rb") as f:
-        audio_data = base64.b64encode(f.read()).decode('utf-8')
-
-    ### REQUEST WITH CURL LIKE INTERFACE
-
-    ## Request configuration
-    #url = "http://localhost:8000/v1/chat/completions"
-    #headers = {
-    #    "Authorization": "Bearer your-openai-api-key"
-    #}
-    #payload = {
-    #    "model": "meta-llama/Llama-3.2-1B-Instruct",
-    #    "openai_api_url": "http://127.0.0.1:8001/v1/chat/completions",
-    #    "messages": [{"role": "user", "content": "Tell me a story about a brave knight"}],
-    #    "speaker_files": [audio_data],
-    #    "vocalize_at_every_n_words": 25,
-    #    "stream": True
-    #}
-    #
-    ## Process stream
-    #process_stream_response(url, headers, payload)
-
-    # or with OAI
-    client = OpenAI(
-        api_key="your-openai-api-key",
-        base_url="http://127.0.0.1:8000/v1/",  # insert the auralis endpoint, NOT the LLM generation endpoint
-    )
-    # Optional: customize Auralis parameters
-    custom_auralis_params = {
-        'auralis_temperature': 0.8,
-        'auralis_language': 'en',
-        'auralis_enhance_speech': True
-    }
+def generate_from_streaming_source(client, audio_data, auralis_params):
+    auralis_params.update({
+        # this should be your text generation endpoint, so not where you are running the auralis but the LLM endpoint (OAI, Ollama...)
+        'openai_api_url': "http://127.0.0.1:8001/v1/chat/completions",
+        'speaker_files': [audio_data],
+        'vocalize_at_every_n_words': 40,
+    })
     # Process stream using OpenAI
     process_stream_with_openai(
         client=client,
         model='meta-llama/Llama-3.2-1B-Instruct',
-        llm_runtime_url="http://127.0.0.1:8001/v1/chat/completions",
-        speaker_data=audio_data,
-        vocalize_every_n_words=40,
         prompt="Tell me a story about a brave knight",
-        auralis_params=custom_auralis_params  # Optional: pass custom parameters
+        auralis_params=auralis_params
     )
+
+def vocalize_text_with_tts_endpoint(client, audio_data, auralis_params):
+    speech_file_path = Path(__file__).parent / "speech.mp3"
+
+    response = client.audio.speech.create(
+        model="xttsv2", # it doesn't actually matter
+        voice=[audio_data],
+        input="Today is a wonderful day to build something people love!",
+        response_format='mp3',
+        speed=1.0,
+        extra_body={**auralis_params}
+    )
+    response.stream_to_file(speech_file_path)
+
+
+def main():
+    # Read reference audio
+    with open("../tests/resources/audio_samples/female.wav", "rb") as f:
+        audio_data = base64.b64encode(f.read()).decode('utf-8')
+        # or with OAI
+    client = OpenAI(
+            api_key="your-openai-api-key",
+            base_url="http://127.0.0.1:8000/v1/",  # insert the auralis endpoint, NOT the LLM generation endpoint
+    )
+    auralis_params = {
+        # this should be your text generation endpoint, so not where you are running the auralis but the LLM endpoint (OAI, Ollama...)
+        'enhance_speech': True,
+        'sound_norm_refs': False,
+        'max_ref_length': 60,
+        'gpt_cond_len': 30,
+        'gpt_cond_chunk_len': 4,
+        'temperature': 0.75,
+        'top_p': 0.85,
+        'top_k': 50,
+        'repetition_penalty': 5.0,
+        'length_penalty': 1.0,
+        'do_sample': True,
+        'language': "auto"
+    }
+    generate_from_streaming_source(client, audio_data, auralis_params)
+    vocalize_text_with_tts_endpoint(client, audio_data, auralis_params)
+
+if __name__ == '__main__':
+    main()

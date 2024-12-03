@@ -10,6 +10,7 @@ from IPython.display import Audio, display
 import numpy as np
 import torch
 import torchaudio
+from torio.io import CodecConfig
 
 
 @dataclass
@@ -17,9 +18,15 @@ class TTSOutput:
     """Container for TTS inference output with integrated audio utilities"""
     array: Union[np.ndarray, bytes]
     sample_rate: int = 24000
+    bit_depth: int = 16
+    bit_rate: int = 192 # kbps
+    compression: int = 10 #
+    channel: int = 1
+
     start_time: Optional[float] = None
     end_time: Optional[float] = None
     token_length: Optional[int] = None
+
 
     def __post_init__(self):
         if isinstance(self.array, bytes):
@@ -124,7 +131,7 @@ class TTSOutput:
         """Convert audio to bytes format.
 
         Args:
-            format: Output format ('wav' or 'raw')
+            format: Output format ('mp3', 'opus', 'aac', 'flac', 'wav', 'pcm')
             sample_width: Bit depth (1, 2, or 4 bytes per sample)
 
         Returns:
@@ -140,19 +147,43 @@ class TTSOutput:
         # Normalize to [-1, 1]
         wav_tensor = torch.clamp(wav_tensor, -1.0, 1.0)
 
-        if format == 'wav':
-            buffer = io.BytesIO()
+        buffer = io.BytesIO()
+
+        if format in ['wav', 'flac']:
             torchaudio.save(
                 buffer,
                 wav_tensor,
                 self.sample_rate,
-                format="wav",
+                format=format,
                 encoding="PCM_S" if sample_width == 2 else "PCM_F",
-                bits_per_sample=sample_width * 8
+                bits_per_sample=sample_width * 8,
+                compression = CodecConfig(compression_level=min(8, self.compression)) if format == 'flac' else None
             )
-            return buffer.getvalue()
-
-        elif format == 'raw':
+        elif format == 'mp3':
+            torchaudio.save(
+                buffer,
+                wav_tensor,
+                self.sample_rate,
+                format="mp3",
+                compression = CodecConfig(bit_rate=self.bit_rate)
+            )
+        elif format == 'opus':
+            torchaudio.save(
+                buffer,
+                wav_tensor,
+                self.sample_rate,
+                format="opus",
+                compression = CodecConfig(compression_level=self.compression)
+            )
+        elif format == 'aac':
+            torchaudio.save(
+                buffer,
+                wav_tensor,
+                self.sample_rate,
+                format="adts",
+                compression = CodecConfig(bit_rate=self.bit_rate)
+            )
+        elif format == 'pcm':
             # Scale to appropriate range based on sample width
             if sample_width == 2:  # 16-bit
                 wav_tensor = (wav_tensor * 32767).to(torch.int16)
@@ -161,9 +192,10 @@ class TTSOutput:
             else:  # 8-bit
                 wav_tensor = (wav_tensor * 127).to(torch.int8)
             return wav_tensor.cpu().numpy().tobytes()
-
         else:
-            raise ValueError(f"Unsupported format: {format}")
+            raise ValueError(f"Unsupported format: {format}. Supported formats are: mp3, opus, aac, flac, wav, pcm")
+
+        return buffer.getvalue()
 
     def save(self,
              filename: Union[str, Path],
@@ -195,7 +227,9 @@ class TTSOutput:
             filename,
             wav_tensor,
             sample_rate,
-            format=format
+            format=format,
+            bits_per_sample=self.bit_depth,
+            channels_first=self.channel
         )
 
     def resample(self, new_sample_rate: int) -> 'TTSOutput':
