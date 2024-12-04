@@ -4,7 +4,8 @@ WORKDIR /app
 
 COPY . .
 
-RUN python setup.py install
+RUN pip install setuptools setuptools_scm && \
+    python setup.py install
 
 ENTRYPOINT [ "auralis.openai" ]
 
