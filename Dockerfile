@@ -4,6 +4,8 @@ WORKDIR /app
 
 COPY . .
 
+RUN apt update && apt install -y build-essential
+
 RUN --mount=type=cache,target=/root/.cache/pip python -m pip install setuptools setuptools_scm
 
 RUN --mount=type=cache,target=/root/.cache/pip python setup.py install
