@@ -773,7 +773,7 @@ class XTTSTokenizerFast(PreTrainedTokenizerFast):
             char_limit = self.char_limits.get(base_lang, 250)
 
             # Clean and preprocess
-            text = self.preprocess_text(text, text_lang)
+            #text = self.preprocess_text(text, text_lang) we do this in the hidden function
 
             # Split text into sentences/chunks based on language
             chunk_list = split_sentence(text, base_lang, text_split_length=char_limit)
