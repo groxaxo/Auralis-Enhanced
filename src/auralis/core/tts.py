@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import queue
 import threading
 import time
@@ -43,16 +44,20 @@ class TTS:
         from auralis.models.registry import MODEL_REGISTRY
 
         try:
-            config_path = hf_hub_download(repo_id=model_name_or_path, filename='config.json')
-            with open(config_path, 'r') as f:
+            with open(os.path.join(model_name_or_path, 'config.json'), 'r') as f:
                 config = json.load(f)
-            kwargs['max_concurrency'] = self.concurrency
 
-            self.tts_engine = MODEL_REGISTRY[config['model_type']].from_pretrained(model_name_or_path, **kwargs)
-            return self
-        except Exception as e:
-            raise ValueError(f"Could not load model from {model_name_or_path}: {e}")
+        except FileNotFoundError:
+            try:
+                config_path = hf_hub_download(repo_id=model_name_or_path, filename='config.json')
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
 
+            except Exception as e:
+                raise ValueError(f"Could not load model from {model_name_or_path} neither locally or online: {e}")
+
+        self.tts_engine = MODEL_REGISTRY[config['model_type']].from_pretrained(model_name_or_path, **kwargs)
+        return self
     async def prepare_for_streaming_generation(self, request: TTSRequest):
         conditioning_config = self.tts_engine.conditioning_config
         if conditioning_config.speaker_embeddings or conditioning_config.gpt_like_decoder_conditioning:
