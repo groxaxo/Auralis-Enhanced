@@ -6,7 +6,8 @@ COPY . .
 
 RUN apt update && apt install -y build-essential portaudio19-dev
 
-RUN --mount=type=cache,target=/root/.cache/pip python -m pip install /app
+# ModuleNotFoundError: No module named 'langid'
+RUN --mount=type=cache,target=/root/.cache/pip python -m pip install langid /app
 
 ENTRYPOINT [ "auralis.openai" ]
 
