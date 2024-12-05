@@ -6,9 +6,7 @@ COPY . .
 
 RUN apt update && apt install -y build-essential portaudio19-dev
 
-RUN --mount=type=cache,target=/root/.cache/pip python -m pip install setuptools setuptools_scm
-
-RUN --mount=type=cache,target=/root/.cache/pip python setup.py install
+RUN --mount=type=cache,target=/root/.cache/pip python -m pip install /app
 
 ENTRYPOINT [ "auralis.openai" ]
 
