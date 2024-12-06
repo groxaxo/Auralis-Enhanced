@@ -101,7 +101,7 @@ class TTSRequest:
     context_partial_function: Optional[Callable] = None
 
     start_time: Optional[float] = None
-    enhance_speech: bool = True
+    enhance_speech: bool = False
     audio_config: AudioPreprocessingConfig = field(default_factory=AudioPreprocessingConfig)
     language: SupportedLanguages = "auto"
     request_id: str = field(default_factory=lambda: uuid.uuid4().hex)
