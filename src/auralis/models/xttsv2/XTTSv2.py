@@ -638,7 +638,15 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
                 async with self.decoder_semaphore:
                     async with self.cuda_memory_manager():
-                        wav = await asyncio.get_event_loop().run_in_executor(
+                        if request.stream:
+                            async for wav in asyncio.to_thread(self.hifigan_decoder.chunked_inference_generator, hidden_states,
+                                g=speaker_embeddings, chunk_size=request.straming_chunk_size):
+                                yield TTSOutput(array=wav,
+                                                start_time=request.start_time,
+                                                token_length=len(output.outputs[0].token_ids)
+                                                )
+                        else:
+                            wav = await asyncio.get_event_loop().run_in_executor(
                             self.executor,
                             lambda: self.hifigan_decoder(
                                 hidden_states,
@@ -647,11 +655,11 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                         ) # noqa
 
 
-                # yield the audio output
-                yield TTSOutput(array= wav,
-                                start_time = request.start_time,
-                                token_length = len(output.outputs[0].token_ids)
-                                )
+                            # yield the audio output
+                            yield TTSOutput(array= wav,
+                                            start_time = request.start_time,
+                                            token_length = len(output.outputs[0].token_ids)
+                                            )
 
 
 
