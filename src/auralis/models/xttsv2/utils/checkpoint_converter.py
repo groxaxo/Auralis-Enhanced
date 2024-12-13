@@ -7,7 +7,7 @@ from safetensors.torch import save_file
 from huggingface_hub import snapshot_download
 
 
-def download_repo_files(repo_id, output_path, exclude_extensions=['.safetensors']):
+def download_repo_files(repo_id, output_path, exclude_extensions=['*.safetensors']):
     """
     Downloads all files from a GitHub repository except specified extensions.
 
