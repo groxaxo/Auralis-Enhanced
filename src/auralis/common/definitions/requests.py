@@ -115,7 +115,6 @@ class TTSRequest:
 
     # Generation parameters
     stream: bool = False
-    stream_chunk_size: int = 2048
     temperature: float = 0.75
     top_p: float = 0.85
     top_k: int = 50
