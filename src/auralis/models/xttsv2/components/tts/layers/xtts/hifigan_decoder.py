@@ -665,6 +665,92 @@ class HifiDecoder(torch.nn.Module):
         """
         return self.forward(c, g=g)
 
+    @torch.no_grad()
+    def chunked_inference_generator(self, spectrogram, g=None, receptive_field=512, chunk_size=2048):
+        """
+        Generator method for chunked inference.
+
+        This method allows generating audio from a large spectrogram in chunks,
+        while ensuring the final output is identical to the one obtained if the entire
+        spectrogram was processed at once.
+
+        Args:
+            spectrogram (Tensor): Input spectrogram [1, C, T].
+            g (Tensor, optional): Global conditioning tensor [1, Cg, T] if available.
+            receptive_field (int): The number of frames of context needed.
+            chunk_size (int): The size of each processed chunk (excluding the receptive field).
+
+        Yields:
+            Tensor: Partial waveform outputs. When concatenated,
+                    they produce an identical result to full inference in one pass.
+
+        Notes:
+            - The first yielded chunk will appear after processing the first segment,
+              because we discard the initial `receptive_field` frames of "warm-up" context.
+            - Subsequent chunks also discard `receptive_field` frames from the start of their output.
+        """
+
+        # Perform the same interpolation steps as in forward to prepare the input for the decoder
+        latents = spectrogram
+        z = torch.nn.functional.interpolate(
+            latents.transpose(1, 2),
+            scale_factor=self.ar_mel_length_compression / self.output_hop_length,
+            mode="linear",
+            align_corners=False,
+        ).squeeze(1)
+
+        if self.output_sample_rate != self.input_sample_rate:
+            z = torch.nn.functional.interpolate(
+                z,
+                scale_factor=self.output_sample_rate / self.input_sample_rate,
+                mode="linear",
+                align_corners=False,
+            ).squeeze(0)
+
+        # z shape is now [C, T] (usually [1, T])
+        # Add batch dimension if needed
+        if z.dim() == 2:
+            z = z.unsqueeze(0)  # [1, C, T]
+
+        total_length = z.size(-1)
+
+        # Pad the input to provide "warm-up" context for the first chunk
+        padded_z = F.pad(z, (receptive_field, 0), mode='replicate')
+
+        current_pos = 0
+
+        # Process the signal in chunks
+        while current_pos < total_length:
+            # Determine current chunk length
+            length = min(chunk_size, total_length - current_pos)
+
+            # Compute start and end indices on padded_z
+            start_padded = current_pos + receptive_field
+            end_padded = start_padded + length
+
+            # For subsequent chunks, we include the previous receptive_field frames for context
+            if current_pos > 0:
+                start_padded -= receptive_field
+
+            chunk_input = padded_z[:, :, start_padded:end_padded]
+
+            # Run the decoder on the chunk
+            chunk_output = self.waveform_decoder(chunk_input, g=g)
+
+            # For the first chunk, discard the first `receptive_field` samples of output
+            # because they correspond to the warm-up region.
+            if current_pos == 0:
+                chunk_output = chunk_output[:, :, receptive_field:]
+            else:
+                # For subsequent chunks, also discard the first `receptive_field`
+                # samples because they've been generated as overlap from previous chunk.
+                chunk_output = chunk_output[:, :, receptive_field:]
+
+            # Yield the chunk of audio
+            yield chunk_output
+
+            current_pos += length
+
     def load_checkpoint(self, checkpoint_path, eval=False):  # pylint: disable=unused-argument, redefined-builtin
         state = load_fsspec(checkpoint_path, map_location=torch.device("cpu"))
         # remove unused keys
