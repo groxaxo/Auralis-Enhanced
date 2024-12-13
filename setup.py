@@ -62,7 +62,8 @@ setup(
         "transformers",
         "vllm==0.6.4.post1",
         "nvidia-ml-py",
-        "numpy"
+        "numpy",
+        "langid"
 
     ],
     python_requires='>=3.10',
