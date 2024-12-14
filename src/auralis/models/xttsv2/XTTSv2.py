@@ -86,7 +86,6 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
         self.max_concurrency = kwargs.pop('max_concurrency', 10)
         semaphore_concurrency = max(1,self.max_concurrency // 6) * self.tp
-        self.executor = ThreadPoolExecutor(max_workers=semaphore_concurrency)  # For CPU-bound tasks
 
         # Register buffer before creating modules
         self.register_buffer("mel_stats", torch.ones(80))
@@ -166,8 +165,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
         # create a polynomial object
         self.max_gb_for_vllm_model = (coefficients[0] * self.max_concurrency ** 2 +
-                    coefficients[1] * self.max_concurrency +
-                    coefficients[2])
+                                      coefficients[1] * self.max_concurrency +
+                                      coefficients[2])
 
     @property
     def conditioning_config(self) -> ConditioningConfig:
@@ -457,7 +456,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
         # Merge all the audios and compute the latents for the GPT
         full_audio = torch.cat(audios, dim=-1)
-        gpt_cond_latents = self.get_gpt_cond_latents(
+        gpt_cond_latents = await asyncio.to_thread(self.get_gpt_cond_latents,
             full_audio, load_sr, length=gpt_cond_len, chunk_length=gpt_cond_chunk_len
         )  # [1, 1024, T]
 
@@ -800,20 +799,17 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
                 async with self.decoder_semaphore:
                     async with self.cuda_memory_manager():
-                        wav = await asyncio.get_event_loop().run_in_executor(
-                            self.executor,
-                            lambda: self.hifigan_decoder(
+                        wav = (await asyncio.to_thread(self.hifigan_decoder,
                                 hidden_states,
                                 g=speaker_embeddings
-                            ).cpu().detach().numpy().squeeze()
-                        ) # noqa
+                            )).cpu().detach().numpy().squeeze()
+                         # noqa
 
-
-                # yield the audio output
-                yield TTSOutput(array= wav,
-                                start_time = request.start_time,
-                                token_length = len(output.outputs[0].token_ids)
-                                )
+                        # yield the audio output
+                        yield TTSOutput(array= wav,
+                                        start_time = request.start_time,
+                                        token_length = len(output.outputs[0].token_ids)
+                                        )
 
 
 

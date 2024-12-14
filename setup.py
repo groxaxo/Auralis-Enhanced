@@ -16,7 +16,7 @@ def check_platform():
 check_platform()
 setup(
     name='auralis',
-    version='0.2.7.post1',
+    version='0.2.8',
     description='This is a faster implementation for TTS models, to be used in highly async environment',
     long_description=Path("README.md").read_text(),
     long_description_content_type="text/markdown",
@@ -62,7 +62,9 @@ setup(
         "transformers",
         "vllm==0.6.4.post1",
         "nvidia-ml-py",
-        "numpy"
+        "numpy",
+        "langid"
+
     ],
     extras_require={
         'docs': [

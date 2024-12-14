@@ -293,6 +293,50 @@ class HifiganGenerator(torch.nn.Module):
             assert not self.training
             self.remove_weight_norm()
 
+    def estimate_receptive_field(self):
+        """
+        Estimate the receptive field of the model based on its configuration.
+
+        Steps:
+        1. Start from the initial conv (conv_pre) with kernel=7 (no dilation):
+           receptive_field = 7
+        2. For each upsampling stage:
+           - Multiply the current receptive field by the upsampling factor (since time length is scaled).
+           - Add the receptive field contribution from the associated MRF blocks at this scale.
+
+        The MRF block receptive field is calculated by summing the receptive fields of all resblocks at that scale.
+        Each resblock adds its own receptive field based on the dilations and kernel sizes.
+
+        Note: This is a heuristic estimation assuming that the resblocks are sequentially affecting the receptive field.
+        """
+
+        # Start from conv_pre: kernel_size=7, dilation=1
+        # Receptive field increment = (7 - 1) * 1 = 6
+        # Since we talk about total receptive field size, let's consider receptive_field as the number of frames.
+        # Here we can say receptive_field = 7 (the number of frames covered by kernel=7)
+        receptive_field = 7
+
+        idx = 0
+        for i, up_factor in enumerate(self.upsample_factors):
+            # After upsampling, the receptive field scales
+            receptive_field = receptive_field * up_factor
+
+            # Now add the contribution of the MRF blocks at this scale
+            # We have num_kernels blocks per scale
+            scale_rf = 0
+            for j in range(self.num_kernels):
+                block = self.resblocks[idx]
+                idx += 1
+                scale_rf = max(scale_rf, block.receptive_field())  # Take max since they are parallel and merged
+
+            # The MRF blocks process after upsampling, so we add that receptive field increment.
+            # Since these blocks are in series at the same scale (averaged), we approximate by adding them.
+            # Actually, they are parallel and then averaged. The effective RF should consider the largest block.
+            # We'll consider just the largest one for a safer overestimate.
+            receptive_field += scale_rf
+
+        return receptive_field
+
 
 class SELayer(nn.Module):
     """Squeeze-and-Excitation layer for channel-wise attention.
@@ -329,8 +373,7 @@ class SELayer(nn.Module):
         """
         y = self.avg_pool(x).view(x.size(0), x.size(1))
         y = self.fc(y).view(x.size(0), x.size(1), 1, 1)
-        x = x * y
-        return x
+        return x * y
 
 
 class SEBasicBlock(nn.Module):
