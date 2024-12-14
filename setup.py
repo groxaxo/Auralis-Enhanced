@@ -66,6 +66,14 @@ setup(
         "langid"
 
     ],
+    extras_require={
+        'docs': [
+            'mkdocs>=1.4.0',
+            'mkdocs-material>=9.0.0',
+            'mkdocstrings>=0.20.0',
+            'mkdocstrings-python>=1.0.0',
+        ],
+    },
     python_requires='>=3.10',
     classifiers=[
         'Programming Language :: Python :: 3',
