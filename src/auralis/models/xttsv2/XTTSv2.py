@@ -813,6 +813,6 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
 
 
-async def shutdown(self):
-    self.llm_engine.shutdown_background_loop()
+    async def shutdown(self):
+        self.llm_engine.shutdown_background_loop()
 

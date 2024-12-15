@@ -2,13 +2,12 @@ import asyncio
 import json
 import logging
 import os
-import queue
-import threading
 import time
 import uuid
-from concurrent.futures import Future
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import AsyncGenerator, Optional, Dict, Union, Generator, List
+
 from huggingface_hub import hf_hub_download
 
 from auralis.common.logging.logger import setup_logger, set_vllm_logging_level
@@ -18,10 +17,9 @@ from auralis.common.metrics.performance import track_generation
 from auralis.common.scheduling.two_phase_scheduler import TwoPhaseScheduler
 from auralis.models.base import BaseAsyncTTSEngine, AudioOutputGenerator
 
-
 class TTS:
     """A high-performance text-to-speech engine optimized for inference speed.
-    
+
     This class provides an interface for both synchronous and asynchronous speech generation,
     with support for streaming output and parallel processing of multiple requests.
     """
@@ -40,19 +38,19 @@ class TTS:
         self.concurrency = scheduler_max_concurrency
         self.max_vllm_memory: Optional[int] = None
         self.logger = setup_logger(__file__)
+        self.loop = None
 
-        self.loop = asyncio.new_event_loop()
-        self.loop_thread = threading.Thread(target=self._run_event_loop, daemon=True)
-        self.loop_thread.start()
-        self._async = None
-
-    def _run_event_loop(self):
-        """Run the event loop in a separate thread."""
-        asyncio.set_event_loop(self.loop)
-        self.loop.run_forever()
+    def _ensure_event_loop(self):
+        """Ensures that an event loop exists and is set."""
+        try:
+            self.loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
 
     def from_pretrained(self, model_name_or_path: str, **kwargs):
         """Load a pretrained model from local path or Hugging Face Hub.
+           **THIS METHOD IS SYNCHRONOUS**
 
         Args:
             model_name_or_path (str): Local path or Hugging Face model identifier.
@@ -66,20 +64,26 @@ class TTS:
         """
         from auralis.models.registry import MODEL_REGISTRY
 
+        # Ensure an event loop exists for potential async operations within from_pretrained
+        self._ensure_event_loop()
+
         try:
             with open(os.path.join(model_name_or_path, 'config.json'), 'r') as f:
                 config = json.load(f)
-
         except FileNotFoundError:
             try:
                 config_path = hf_hub_download(repo_id=model_name_or_path, filename='config.json')
                 with open(config_path, 'r') as f:
                     config = json.load(f)
-
             except Exception as e:
                 raise ValueError(f"Could not load model from {model_name_or_path} neither locally or online: {e}")
 
-        self.tts_engine = MODEL_REGISTRY[config['model_type']].from_pretrained(model_name_or_path, **kwargs)
+        # Run potential async operations within from_pretrained in the event loop
+        async def _load_model():
+            return MODEL_REGISTRY[config['model_type']].from_pretrained(model_name_or_path, **kwargs)
+
+        self.tts_engine = self.loop.run_until_complete(_load_model()) # to start form the correct loop
+
         return self
 
     async def prepare_for_streaming_generation(self, request: TTSRequest):
@@ -164,11 +168,11 @@ class TTS:
             Exception: If any error occurs during processing.
         """
         try:
-            async for chunk in self.tts_engine.process_tokens_to_speech( # type: ignore
+            async for chunk in self.tts_engine.process_tokens_to_speech(  # type: ignore
                     generator=gen_input['generator'],
                     speaker_embeddings=gen_input['speaker_embedding'],
                     multimodal_data=gen_input['multimodal_data'],
-                    request = gen_input['request'],
+                    request=gen_input['request'],
             ):
                 yield chunk
         except Exception as e:
@@ -199,10 +203,8 @@ class TTS:
         Raises:
             RuntimeError: If instance was not created for async generation.
         """
-        if self._async == False:
-            raise RuntimeError("This instance was not created for async generation.")
+        self._ensure_event_loop()
 
-        self._async = True
         async def process_chunks():
             chunks = []
             try:
@@ -243,14 +245,15 @@ class TTS:
             return [request]
 
         text_chunks = [request.text[i:i + max_length]
-                      for i in range(0, len(request.text), max_length)]
+                       for i in range(0, len(request.text), max_length)]
 
         return [
             (copy := request.copy(), setattr(copy, 'text', chunk), setattr(copy, 'request_id', uuid.uuid4().hex))[0]
             for chunk in text_chunks
         ]
 
-    async def _process_multiple_requests(self, requests: List[TTSRequest], results: Optional[List] = None) -> Optional[TTSOutput]:
+    async def _process_multiple_requests(self, requests: List[TTSRequest], results: Optional[List] = None) -> Optional[
+        TTSOutput]:
         """Process multiple TTS requests in parallel.
 
         Args:
@@ -314,101 +317,44 @@ class TTS:
         Raises:
             RuntimeError: If instance was created for async generation.
         """
-        if self._async == True:
-            raise RuntimeError("This instance was created for async generation.")
-
-        self._async = False
+        self._ensure_event_loop()
         requests = self.split_requests(request)
 
         if request.stream:
             # Streaming case
-            return self._streaming_sync_wrapper(requests)
-        else:
-            # Non-streaming case
-            return self._non_streaming_sync_wrapper(requests)
-
-    def _non_streaming_sync_wrapper(self, requests):
-        """Synchronous wrapper for non-streaming speech generation.
-
-        Args:
-            requests: List of TTS requests to process.
-
-        Returns:
-            TTSOutput: Combined audio output.
-
-        Raises:
-            Exception: If any error occurs during processing.
-        """
-        # Use asyncio.run_coroutine_threadsafe and get a concurrent.futures.Future
-        future = asyncio.run_coroutine_threadsafe(self._process_requests(requests), self.loop)
-        try:
-            return future.result()  # This will block until the result is available
-        except Exception as e:
-            raise e
-
-    def _streaming_sync_wrapper(self, requests):
-        """Synchronous wrapper for streaming speech generation.
-
-        Args:
-            requests: List of TTS requests to process.
-
-        Returns:
-            Generator: Generator yielding audio chunks.
-        """
-        q = queue.Queue()
-
-        async def produce():
-            try:
+            def streaming_wrapper():
                 for sub_request in requests:
-                    async for chunk in self.scheduler.run(
-                            inputs=sub_request,
-                            request_id=sub_request.request_id,
-                            first_phase_fn=self._prepare_generation_context,
-                            second_phase_fn=self._second_phase_fn
-                    ):
-                        q.put(chunk)
-                q.put(None)  # Signal completion
-            except Exception as e:
-                q.put(e)
-                q.put(None)  # Ensure the generator exits
+                    # For streaming, execute the async gen
+                    async def process_stream():
+                        try:
+                            async for chunk in self.scheduler.run(
+                                    inputs=sub_request,
+                                    request_id=sub_request.request_id,
+                                    first_phase_fn=self._prepare_generation_context,
+                                    second_phase_fn=self._second_phase_fn
+                            ):
+                                yield chunk
+                        except Exception as e:
+                            self.logger.error(f"Error during streaming: {e}")
+                            raise
 
-        # Schedule the coroutine in the dedicated event loop
-        future = asyncio.run_coroutine_threadsafe(produce(), self.loop)
+                    # Execute the async gen
+                    generator = process_stream()
+                    try:
+                        while True:
+                            chunk = self.loop.run_until_complete(anext(generator))
+                            yield chunk
+                    except StopAsyncIteration:
+                        pass
 
-        # Return a generator that yields items from the queue
-        def sync_generator():
-            while True:
-                item = q.get()
-                if item is None:
-                    break
-                if isinstance(item, Exception):
-                    raise item
-                yield item
-
-            # Ensure that the coroutine has completed
-            try:
-                future.result()
-            except Exception as e:
-                raise e
-
-        return sync_generator()
-
-    async def _process_requests(self, requests):
-        chunks = []
-        for sub_request in requests:
-            async for chunk in self.scheduler.run(
-                    inputs=sub_request,
-                    request_id=sub_request.request_id,
-                    first_phase_fn=self._prepare_generation_context,
-                    second_phase_fn=self._second_phase_fn
-            ):
-                chunks.append(chunk)
-        return TTSOutput.combine_outputs(chunks)
+            return streaming_wrapper()
+        else:
+            # Non streaming
+            return self.loop.run_until_complete(self._process_multiple_requests(requests))
 
     async def shutdown(self):
+        """Shuts down the TTS engine and scheduler."""
         if self.scheduler:
             await self.scheduler.shutdown()
         if self.tts_engine and hasattr(self.tts_engine, 'shutdown'):
             await self.tts_engine.shutdown()
-        self.loop.call_soon_threadsafe(self.loop.stop())
-        self.loop_thread.join()
