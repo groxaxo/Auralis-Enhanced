@@ -730,7 +730,7 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
         # used to check if all weights were loaded
         assert set(params_dict.keys()) - loaded_names == set(), \
             (f"Missing weights: {set(params_dict.keys()) - loaded_names}, "
-             f"this probably means you are using an incompatible model ")
+             f"this probably means you are using an incompatible model, \n\nyour model has this weights: {set(params_dict.keys())}")
 
 class GPT2Model(nn.Module):
 
