@@ -1,22 +1,21 @@
 import asyncio
 import time
+
+import pytest
+
 from auralis import TTS, TTSRequest, TTSOutput
 
-
-async def main():
-    # Inizializza il modello TTS
-    tts = TTS().from_pretrained("AstraMindAI/xttsv2", gpt_model='AstraMindAI/xtts2-gpt')
-
-    text = """The ancient mountains of the Andes are home to spectacled bears, 
-    pumas and the magnificent Andean condor."""
+@pytest.mark.asyncio
+async def main(default_test_params):
+    tts = TTS().from_pretrained(default_test_params['tts_model'], gpt_model=default_test_params['gpt_model'])
 
     # Crea multiple richieste parallele
     requests = [
         TTSRequest(
-            text=text,
-            speaker_files=["/home/marco/PycharmProjects/betterVoiceCraft/Auralis/tests/resources/audio_samples/female.wav"],
-            stream=id%2==0,
-        ) for id in range(2)  # 8 richieste parallele
+            text=default_test_params['text'],
+            speaker_files=[default_test_params['speaker_file']],
+            stream=id % 2 == 0,
+        ) for id in range(default_test_params['n_iterations_parallel_requests'])  # x parallel request
     ]
 
     # Funzione per processare una singola richiesta
