@@ -240,16 +240,16 @@ def build_gradio_ui():
             outputs=[audio_output_mic, log_output_mic],
           )
 
-        gr.Examples(
-        [
-            [
-                "I need to stop procrastinating and get my life together; ...Googles How long would it take a snail to travel around the world?",
-                ['/home/astramind-giacomo/Desktop/Auralis/tests/resources/audio_samples/female.wav'],
-                1, False, 0.75, 0.85, 50, 5.0, 'auto'
-            ],
-        ],
-            inputs=[input_text, ref_audio_files, speed, enhance_speech, temperature, top_p, top_k, repetition_penalty, language],
-        )
+        # gr.Examples(
+        # [
+        #     [
+        #         "I need to stop procrastinating and get my life together; ...Googles How long would it take a snail to travel around the world?",
+        #         ['../tests/resources/audio_samples/female.wav'],
+        #         1, False, 0.75, 0.85, 50, 5.0, 'auto'
+        #     ],
+        # ],
+        #     inputs=[input_text, ref_audio_files, speed, enhance_speech, temperature, top_p, top_k, repetition_penalty, language],
+        # )
 
     return ui
 
