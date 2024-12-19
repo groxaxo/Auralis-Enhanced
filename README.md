@@ -490,6 +490,13 @@ Memory usage:
 - ~ 5.3GB VRAM concurrency = 20
 
 
+## Gradio
+
+[Gradio code](https://github.com/astramind-ai/Auralis/blob/main/examples/gradio_example.py)
+
+![Auralis](docs/img/gradio_exp.png)
+
+
 ## Contributions
 
 **Join Our Community!**
