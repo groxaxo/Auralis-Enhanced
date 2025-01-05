@@ -507,7 +507,7 @@ We welcome and appreciate any contributions to our project! To ensure a smooth a
 ## Learn More 🔭
 
 - [Technical Deep Dive](https://www.astramind.ai/post/auralis)
-- [Adding Custom Models]([docs/ADDING_MODELS.md](https://github.com/astramind-ai/Auralis/blob/main/docs/advanced/adding-models.md))
+- [Adding Custom Models](https://github.com/astramind-ai/Auralis/blob/main/docs/advanced/adding-models.md)
 
 ## License
 
