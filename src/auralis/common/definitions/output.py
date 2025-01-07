@@ -50,16 +50,6 @@ class TTSOutput:
 
         Returns:
             TTSOutput: New instance with speed-modified audio
-
-        Example:
-            # Speed up 20%
-            faster = audio.change_speed(1.2)
-
-            # Slow down 20%
-            slower = audio.change_speed(0.8)
-
-        Raises:
-            ValueError: If speed_factor is <= 0
         """
         import librosa
 
@@ -87,11 +77,10 @@ class TTSOutput:
             hop_length=hop_length
         )
 
-        # Inverse STFT
+        # Inverse STFT without forcing length
         modified = librosa.istft(
             modified_stft,
-            hop_length=hop_length,
-            length=len(wav)
+            hop_length=hop_length
         )
 
         # Normalize to prevent clipping
