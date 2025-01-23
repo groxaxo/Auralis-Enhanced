@@ -156,9 +156,11 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         for different concurrency levels. This helps in optimizing resource allocation
         for the VLLM engine.
         """
-        # empirically found values
+        # thanks to NinjaPerson24119
+        amd = 2.0  # AMD GPUs are less VRAM efficient than NVIDIA GPUs
+
         x = np.array([2, 5, 10, 16])
-        y = np.array([1.25, 1.35, 1.45, 1.625])
+        y = np.array([1.25 * amd, 1.35 * amd, 1.45 * amd, 1.625 * amd])
 
         # polynomial fit
         coefficients = np.polyfit(x, y, 2)
