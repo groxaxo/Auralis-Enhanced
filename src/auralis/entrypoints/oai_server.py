@@ -3,6 +3,7 @@ import base64
 import json
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from typing import Optional
 
 import aiohttp
@@ -14,11 +15,27 @@ from starlette.responses import StreamingResponse
 from auralis.core.tts import TTS
 from auralis.common.definitions.openai import VoiceChatCompletionRequest, AudioSpeechGenerationRequest
 
-# Initialize FastAPI application
-app = FastAPI()
-
 # Global TTS engine instance
 tts_engine: Optional[TTS] = None
+
+@asynccontextmanager
+async def lifecycle_manager(app: FastAPI):
+    global tts_engine
+    if tts_engine is None:
+        # Use default arguments for startup
+        args = argparse.Namespace(
+            model='AstraMindAI/xttsv2',
+            gpt_model='AstraMindAI/xtts2-gpt',
+            max_concurrency=8,
+            vllm_logging_level='warn'
+        )
+        logging_level = logger_str_to_logging.get(args.vllm_logging_level)
+        start_tts_engine(args, logging_level)
+    yield # here the app run
+    await tts_engine.shutdown()
+
+# Initialize FastAPI application
+app = FastAPI(lifespan=lifecycle_manager)
 
 # Mapping of logging level strings to their corresponding logging constants
 logger_str_to_logging = {
@@ -42,20 +59,8 @@ def start_tts_engine(args, logging_level):
         args.model, gpt_model=args.gpt_model
     ))
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize the TTS engine on FastAPI server startup with default parameters"""
-    global tts_engine
-    if tts_engine is None:
-        # Use default arguments for startup
-        args = argparse.Namespace(
-            model='AstraMindAI/xttsv2',
-            gpt_model='AstraMindAI/xtts2-gpt',
-            max_concurrency=8,
-            vllm_logging_level='warn'
-        )
-        logging_level = logger_str_to_logging.get(args.vllm_logging_level)
-        start_tts_engine(args, logging_level)
+
+
 
 @app.post("/v1/audio/speech")
 async def generate_audio(request: AudioSpeechGenerationRequest):
