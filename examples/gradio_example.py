@@ -18,7 +18,7 @@ from auralis import TTS, TTSRequest, TTSOutput, AudioPreprocessingConfig, setup_
 
 logger = setup_logger(__file__)
 
-tts = TTS()
+tts = TTS(scheduler_max_concurrency=4)  # Reduced concurrency to save GPU memory
 model_path = "AstraMindAI/xttsv2" # change this if you have a different model
 gpt_model = "AstraMindAI/xtts2-gpt"
 try:
@@ -255,4 +255,4 @@ def build_gradio_ui():
 
 if __name__ == "__main__":
     ui = build_gradio_ui()
-    ui.launch(debug=True)
+    ui.launch(debug=True, server_name="0.0.0.0", share=False)

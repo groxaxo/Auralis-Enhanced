@@ -1,18 +1,34 @@
-[![](https://dcbadge.limes.pink/api/server/https://discord.gg/BEMVTmcPEs)](https://discord.gg/https://discord.gg/BEMVTmcPEs)
+<div align="center">
 
-# Auralis 🌌 (/auˈralis/)
+# 🌌 Auralis
 
-Transform text into natural speech (with voice cloning) at warp speed. Process an entire novel in minutes, not hours.
+### *Transform Text into Natural Speech at Warp Speed*
 
-## What is Auralis? 🚀
+[![Discord](https://dcbadge.limes.pink/api/server/https://discord.gg/BEMVTmcPEs)](https://discord.gg/BEMVTmcPEs)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![PyPI](https://img.shields.io/badge/PyPI-auralis-green.svg)](https://pypi.org/project/auralis/)
 
-Auralis is a text-to-speech engine that makes voice generation practical for real-world use:
+*Process an entire novel in minutes, not hours. Convert the first Harry Potter book to speech in just 10 minutes!*
 
-- Convert the entire first Harry Potter book to speech in 10 minutes (**realtime factor of ≈ 0.02x!** )
-- Automatically enhance the reference quality, you can register them even with a low quality mic!
-- It can be configured to have a small memory footprint (scheduler_max_concurrency)
-- Process multiple requests simultaneously
-- Stream long texts piece by piece
+[Quick Start](#quick-start-) • [Features](#key-features-) • [Examples](#examples--usage-) • [Documentation](#learn-more-) • [Contributing](#contributions)
+
+</div>
+
+---
+
+## 🚀 What is Auralis?
+
+Auralis is a blazingly fast, production-ready text-to-speech engine that makes voice generation practical for real-world applications. Built on top of cutting-edge AI models, it delivers exceptional performance without compromising on quality.
+
+### ⚡ Performance Highlights
+
+- **Ultra-Fast Processing**: Convert the entire first Harry Potter book to speech in 10 minutes (**realtime factor of ≈ 0.02x!**)
+- **Voice Cloning**: Clone any voice from short audio samples
+- **Audio Enhancement**: Automatically enhance reference audio quality - works even with low-quality microphones
+- **Memory Efficient**: Configurable memory footprint via `scheduler_max_concurrency`
+- **Parallel Processing**: Handle multiple requests simultaneously
+- **Streaming Support**: Process long texts piece by piece for real-time applications
 
 ## Quick Start ⭐
 
@@ -509,8 +525,41 @@ We welcome and appreciate any contributions to our project! To ensure a smooth a
 - [Technical Deep Dive](https://www.astramind.ai/post/auralis)
 - [Adding Custom Models](https://github.com/astramind-ai/Auralis/blob/main/docs/advanced/adding-models.md)
 
-## License
+## 🙏 Acknowledgments
 
-The codebase is released under Apache 2.0, feel free to use it in your projects.
+Auralis stands on the shoulders of giants. We extend our deepest gratitude to:
 
-The XTTSv2 model (and the files under auralis/models/xttsv2/components/tts) are licensed under the [Coqui AI License](https://coqui.ai/cpml).
+### 🎯 Core Contributors
+- **[AstraMind AI Team](https://github.com/astramind-ai)** - For creating and maintaining Auralis
+- All our amazing [contributors](https://github.com/astramind-ai/Auralis/graphs/contributors) who have helped improve this project
+
+### 🤖 Technology Partners
+- **[Coqui AI](https://coqui.ai/)** - For the exceptional XTTSv2 model that powers our voice synthesis
+- **[OpenAI](https://openai.com/)** - For Whisper and advancing the field of speech AI
+- **[vLLM Team](https://github.com/vllm-project/vllm)** - For the high-performance inference engine
+- **[Hugging Face](https://huggingface.co/)** - For model hosting and the transformers ecosystem
+
+### 🌟 Special Thanks
+- The open-source community for continuous inspiration and support
+- Our Discord community members for valuable feedback and testing
+- Everyone who has starred, forked, or contributed to this project
+
+---
+
+## 📄 License
+
+**Codebase**: Released under [Apache 2.0 License](LICENSE) - feel free to use it in your projects!
+
+**XTTSv2 Model**: The XTTSv2 model and files under `auralis/models/xttsv2/components/tts` are licensed under the [Coqui AI License](https://coqui.ai/cpml).
+
+---
+
+<div align="center">
+
+### Made with ❤️ by the AstraMind AI Team
+
+**[Website](https://www.astramind.ai)** • **[Discord](https://discord.gg/BEMVTmcPEs)** • **[GitHub](https://github.com/astramind-ai)**
+
+*If you find Auralis useful, please consider giving us a ⭐ on GitHub!*
+
+</div>

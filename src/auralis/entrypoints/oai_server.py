@@ -225,7 +225,7 @@ def main():
     """Main function to configure and start the FastAPI server"""
     # Set up command line argument parser
     parser = argparse.ArgumentParser(description="Auralis TTS FastAPI Server")
-    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to run the server on")
+    parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to run the server on")
     parser.add_argument("--port", type=int, default=8000, help="Port to run the server on")
     parser.add_argument("--model", type=str, default='AstraMindAI/xttsv2', help="The base model to run")
     parser.add_argument("--gpt_model", type=str, default='AstraMindAI/xtts2-gpt', help="The gpt model to load alongside the base model, if present")
