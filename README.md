@@ -63,22 +63,33 @@ This enhanced version includes several improvements over the original Auralis:
 
 ## Quick Start ⭐
 
-1. Create a new Conda environment:
+### Installation from Source
+
+1. **Clone this repository:**
+   ```bash
+   git clone https://github.com/groxaxo/Auralis-Enhanced.git
+   cd Auralis-Enhanced
+   ```
+
+2. **Create a new Conda environment:**
    ```bash
    conda create -n auralis_env python=3.10 -y
    ```
 
-2. Activate the environment:
+3. **Activate the environment:**
    ```bash
    conda activate auralis_env
    ```
 
-3. Install Auralis:
+4. **Install dependencies:**
    ```bash
-   pip install auralis
+   pip install -r requirements.txt
+   pip install -e .
    ```
 
-and then you can try it out via **python**
+### Basic Usage
+
+Try it out via **Python**
 
 ```python
 from auralis import TTS, TTSRequest
@@ -135,15 +146,20 @@ This fork is optimized for production server deployment with network accessibili
 
 ### Quick Server Setup
 
+After installing from source (see [Quick Start](#quick-start-)):
+
 ```bash
-# 1. Activate environment
+# 1. Navigate to the project directory
+cd Auralis-Enhanced
+
+# 2. Activate environment
 conda activate auralis_env
 
-# 2. Start Backend API (accessible from network)
+# 3. Start Backend API (accessible from network)
 python -m auralis.entrypoints.oai_server
 # Runs on http://0.0.0.0:8000 by default
 
-# 3. Start Frontend UI (in another terminal)
+# 4. Start Frontend UI (in another terminal)
 cd examples && python gradio_example.py
 # Runs on http://0.0.0.0:7863 by default
 ```
