@@ -1,25 +1,24 @@
 <div align="center">
 
-# 🌌 Auralis
+# 🌌 Auralis Enhanced
 
-### *Transform Text into Natural Speech at Warp Speed*
+### *Production-Ready Text-to-Speech with Voice Cloning & Network Deployment*
 
-[![Discord](https://dcbadge.limes.pink/api/server/https://discord.gg/BEMVTmcPEs)](https://discord.gg/BEMVTmcPEs)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![PyPI](https://img.shields.io/badge/PyPI-auralis-green.svg)](https://pypi.org/project/auralis/)
+[![GitHub](https://img.shields.io/badge/GitHub-Auralis--Enhanced-blue.svg)](https://github.com/groxaxo/Auralis-Enhanced)
 
 *Process an entire novel in minutes, not hours. Convert the first Harry Potter book to speech in just 10 minutes!*
 
-[Quick Start](#quick-start-) • [Features](#key-features-) • [Examples](#examples--usage-) • [Documentation](#learn-more-) • [Contributing](#contributions)
+[Quick Start](#quick-start-) • [Deployment](#-server-deployment) • [Features](#key-features-) • [What's New](#-whats-new-in-this-fork) • [Credits](#-acknowledgments)
 
 </div>
 
 ---
 
-## 🚀 What is Auralis?
+## 🚀 What is Auralis Enhanced?
 
-Auralis is a blazingly fast, production-ready text-to-speech engine that makes voice generation practical for real-world applications. Built on top of cutting-edge AI models, it delivers exceptional performance without compromising on quality.
+**Auralis Enhanced** is a production-ready fork of the original Auralis TTS engine, optimized for network deployment and real-world server usage. This version includes comprehensive deployment documentation, network accessibility improvements, and GPU memory optimizations for running both backend API and frontend UI simultaneously.
 
 ### ⚡ Performance Highlights
 
@@ -29,6 +28,38 @@ Auralis is a blazingly fast, production-ready text-to-speech engine that makes v
 - **Memory Efficient**: Configurable memory footprint via `scheduler_max_concurrency`
 - **Parallel Processing**: Handle multiple requests simultaneously
 - **Streaming Support**: Process long texts piece by piece for real-time applications
+- **Network Ready**: Pre-configured for `0.0.0.0` binding - accessible from any network interface
+- **Production Deployment**: Complete guides for systemd, Docker, and Nginx
+
+## 🆕 What's New in This Fork?
+
+This enhanced version includes several improvements over the original Auralis:
+
+### 🌐 Network Accessibility
+- **Backend API Server**: Now defaults to `0.0.0.0:8000` (was `127.0.0.1:8000`)
+- **Frontend Gradio UI**: Configured for `0.0.0.0:7863` for network access
+- Both services accessible from any network interface out of the box
+
+### 📚 Comprehensive Documentation
+- **[Server Deployment Guide](docs/deployment/server-setup.md)**: Complete production deployment instructions
+  - systemd service configuration
+  - Docker & Docker Compose setup
+  - Nginx reverse proxy examples
+  - GPU memory management strategies
+  - Security best practices
+- **[Components Guide](COMPONENTS.md)**: Complete codebase navigation and architecture overview
+- **[Deployment Summary](DEPLOYMENT_SUMMARY.md)**: Quick reference for all deployment options
+
+### ⚙️ Optimized Configuration
+- **GPU Memory Optimization**: Frontend concurrency reduced to 4 (from 8) for better memory sharing
+- **Concurrent Operation**: Backend and frontend can run simultaneously on same GPU
+- **Language Auto-Detection**: All UI language dropdowns default to "auto"
+
+### 🛠️ Production Ready
+- Pre-configured for network deployment
+- Optimized for multi-service GPU usage
+- Complete monitoring and troubleshooting guides
+- Security configuration examples
 
 ## Quick Start ⭐
 
@@ -65,11 +96,19 @@ output = tts.generate_speech(request)
 output.save('hello.wav')
 ```
 
-or via **cli** using the openai compatible server
-```commandline
-auralis.openai --host 127.0.0.1 --port 8000 --model AstraMindAI/xttsv2 --gpt_model AstraMindAI/xtts2-gpt --max_concurrency 8 --vllm_logging_level warn  
+or via **cli** using the OpenAI-compatible server (now defaults to `0.0.0.0` for network access):
+```bash
+# Backend API Server (accessible from network)
+python -m auralis.entrypoints.oai_server --host 0.0.0.0 --port 8000
+
+# Frontend Gradio UI (in another terminal)
+cd examples
+python gradio_example.py
 ```
-You can see [here](https://github.com/astramind-ai/Auralis/tree/main/docs/USING_OAI_SERVER.md) for a more in-depth explanation or try it out with this [example](https://github.com/astramind-ai/Auralis/tree/main/examples/use_openai_server.py)
+
+The backend will be available at `http://your-server-ip:8000` and frontend at `http://your-server-ip:7863`.
+
+For detailed deployment options (systemd, Docker, Nginx), see the **[Server Deployment Guide](docs/deployment/server-setup.md)**.
 
 ## Key Features 🛸
 
@@ -90,16 +129,67 @@ You can see [here](https://github.com/astramind-ai/Auralis/tree/main/docs/USING_
 - Speech clarity enhancement
 - Volume normalization
 
-## XTTSv2 Finetunes
+## 🚀 Server Deployment
 
-You can use your own XTTSv2 finetunes by simply converting them from the standard coqui checkpoint format to our safetensor format. Use [this script](https://github.com/astramind-ai/Auralis/blob/main/src/auralis/models/xttsv2/utils/checkpoint_converter.py):
-```commandline
-python checkpoint_converter.py path/to/checkpoint.pth --output_dir path/to/output
+This fork is optimized for production server deployment with network accessibility.
+
+### Quick Server Setup
+
+```bash
+# 1. Activate environment
+conda activate auralis_env
+
+# 2. Start Backend API (accessible from network)
+python -m auralis.entrypoints.oai_server
+# Runs on http://0.0.0.0:8000 by default
+
+# 3. Start Frontend UI (in another terminal)
+cd examples && python gradio_example.py
+# Runs on http://0.0.0.0:7863 by default
 ```
 
-it will create two folders, one with the core xttsv2 checkpoint and one with the gtp2 component. Then create a TTS instance with 
+### Production Deployment Options
+
+We provide comprehensive guides for:
+
+- **[systemd Services](docs/deployment/server-setup.md#using-systemd-services)**: Auto-start on boot, process management
+- **[Docker Deployment](docs/deployment/server-setup.md#using-docker)**: Containerized deployment with GPU support
+- **[Nginx Reverse Proxy](docs/deployment/server-setup.md#nginx-reverse-proxy)**: SSL termination, load balancing
+- **[GPU Memory Management](docs/deployment/server-setup.md#gpu-memory-management)**: Optimize for concurrent services
+
+### Configuration
+
+**Backend Server Options:**
+```bash
+python -m auralis.entrypoints.oai_server \
+  --host 0.0.0.0 \              # Network accessible (default)
+  --port 8000 \                 # API port (default)
+  --max_concurrency 8 \         # Concurrent requests (adjust for GPU)
+  --model AstraMindAI/xttsv2 \
+  --gpt_model AstraMindAI/xtts2-gpt
+```
+
+**Frontend Configuration:**
+- Edit `examples/gradio_example.py` to adjust `scheduler_max_concurrency` (default: 4)
+- Optimized for running alongside backend on same GPU
+
+See **[Server Deployment Guide](docs/deployment/server-setup.md)** for complete documentation.
+
+## XTTSv2 Finetunes
+
+You can use your own XTTSv2 finetunes by converting them from the standard Coqui checkpoint format to safetensor format:
+
+```bash
+python src/auralis/models/xttsv2/utils/checkpoint_converter.py \
+  path/to/checkpoint.pth \
+  --output_dir path/to/output
+```
+
+This creates two folders: core XTTSv2 checkpoint and GPT2 component. Then initialize:
+
 ```python
-tts = TTS().from_pretrained("som/core-xttsv2_model", gpt_model='some/xttsv2-gpt_model')
+tts = TTS().from_pretrained("path/to/core-xttsv2_model", 
+                           gpt_model='path/to/xttsv2-gpt_model')
 ```
 
 ## Examples & Usage 🚀
@@ -513,36 +603,77 @@ Memory usage:
 ![Auralis](docs/img/gradio_exp.png)
 
 
-## Contributions
+## 🤝 Contributing
 
-**Join Our Community!**
+We welcome contributions to improve Auralis Enhanced!
 
-We welcome and appreciate any contributions to our project! To ensure a smooth and efficient process, please take a moment to review our [Contribution Guideline](https://github.com/astramind-ai/Auralis/blob/main/CONTRIBUTING.md). By following these guidelines, you'll help us review and accept your contribution quickly. Thank you for your support!
+### For This Fork
+- Open issues for bugs, feature requests, or deployment questions
+- Submit pull requests for improvements
+- Share your deployment experiences and configurations
+
+### For the Original Auralis
+- Visit the [original Auralis repository](https://github.com/astramind-ai/Auralis)
+- Follow their [Contribution Guidelines](https://github.com/astramind-ai/Auralis/blob/main/CONTRIBUTING.md)
+- Join the [Discord community](https://discord.gg/BEMVTmcPEs)
 
 
-## Learn More 🔭
+## 📖 Learn More
 
-- [Technical Deep Dive](https://www.astramind.ai/post/auralis)
-- [Adding Custom Models](https://github.com/astramind-ai/Auralis/blob/main/docs/advanced/adding-models.md)
+### This Fork (Enhanced)
+- **[Server Deployment Guide](docs/deployment/server-setup.md)**: Complete production deployment documentation
+- **[Components Guide](COMPONENTS.md)**: Codebase architecture and navigation
+- **[Deployment Summary](DEPLOYMENT_SUMMARY.md)**: Quick reference for all changes
+
+### Original Auralis Project
+- **[Technical Deep Dive](https://www.astramind.ai/post/auralis)**: Original AstraMind AI blog post
+- **[Original Repository](https://github.com/astramind-ai/Auralis)**: Upstream Auralis project
+- **[Adding Custom Models](https://github.com/astramind-ai/Auralis/blob/main/docs/advanced/adding-models.md)**: Model customization guide
 
 ## 🙏 Acknowledgments
 
-Auralis stands on the shoulders of giants. We extend our deepest gratitude to:
+This project stands on the shoulders of giants. We extend our deepest gratitude to:
 
-### 🎯 Core Contributors
-- **[AstraMind AI Team](https://github.com/astramind-ai)** - For creating and maintaining Auralis
-- All our amazing [contributors](https://github.com/astramind-ai/Auralis/graphs/contributors) who have helped improve this project
+### 🌟 Original Auralis Project
+- **[AstraMind AI Team](https://github.com/astramind-ai)** - For creating and maintaining the original Auralis TTS engine
+  - The brilliant architecture and implementation that made this all possible
+  - Continuous innovation in making TTS practical for real-world use
+- **Original [Auralis Repository](https://github.com/astramind-ai/Auralis)** - The upstream project this fork is based on
+- All [contributors](https://github.com/astramind-ai/Auralis/graphs/contributors) to the original Auralis project
 
-### 🤖 Technology Partners
-- **[Coqui AI](https://coqui.ai/)** - For the exceptional XTTSv2 model that powers our voice synthesis
-- **[OpenAI](https://openai.com/)** - For Whisper and advancing the field of speech AI
-- **[vLLM Team](https://github.com/vllm-project/vllm)** - For the high-performance inference engine
+### 🤖 Core Technology Partners
+- **[Coqui AI](https://coqui.ai/)** - For the exceptional **XTTSv2 model** that powers voice synthesis
+  - The XTTSv2 architecture and pretrained models
+  - Pioneering work in voice cloning and multilingual TTS
+  - Components under `auralis/models/xttsv2/components/tts` are licensed under [Coqui AI License](https://coqui.ai/cpml)
+  
+- **[OpenAI](https://openai.com/)** - For **Whisper** and advancing the field of speech AI
+  - Revolutionary speech recognition technology
+  - Pushing the boundaries of what's possible with audio AI
+  
+- **[vLLM Team](https://github.com/vllm-project/vllm)** - For the high-performance **vLLM inference engine**
+  - Enabling fast, efficient model serving
+  - Making large-scale inference practical
+  
 - **[Hugging Face](https://huggingface.co/)** - For model hosting and the transformers ecosystem
+  - Democratizing access to AI models
+  - Providing the infrastructure for model distribution
 
-### 🌟 Special Thanks
-- The open-source community for continuous inspiration and support
-- Our Discord community members for valuable feedback and testing
-- Everyone who has starred, forked, or contributed to this project
+### 🔧 Infrastructure & Tools
+- **[Gradio](https://gradio.app/)** - For the excellent web UI framework
+- **[FastAPI](https://fastapi.tiangolo.com/)** - For the modern, fast API framework
+- **[PyTorch](https://pytorch.org/)** - For the deep learning foundation
+
+### 🌍 Community & Support
+- The **open-source community** for continuous inspiration and support
+- **Discord community members** for valuable feedback and testing
+- Everyone who has starred, forked, or contributed to Auralis
+- All researchers and developers advancing the field of speech synthesis
+
+### 📝 This Enhanced Fork
+- **Enhanced by**: [groxaxo](https://github.com/groxaxo)
+- **Focus**: Production deployment, network accessibility, and comprehensive documentation
+- **Contributions**: Server deployment guides, GPU optimization, network configuration
 
 ---
 
@@ -556,10 +687,20 @@ Auralis stands on the shoulders of giants. We extend our deepest gratitude to:
 
 <div align="center">
 
-### Made with ❤️ by the AstraMind AI Team
+### 🌟 Original Auralis by [AstraMind AI](https://github.com/astramind-ai)
+### 🚀 Enhanced for Production by [groxaxo](https://github.com/groxaxo)
 
-**[Website](https://www.astramind.ai)** • **[Discord](https://discord.gg/BEMVTmcPEs)** • **[GitHub](https://github.com/astramind-ai)**
+**Original Project**: [astramind-ai/Auralis](https://github.com/astramind-ai/Auralis) • **This Fork**: [groxaxo/Auralis-Enhanced](https://github.com/groxaxo/Auralis-Enhanced)
 
-*If you find Auralis useful, please consider giving us a ⭐ on GitHub!*
+**[AstraMind Website](https://www.astramind.ai)** • **[Discord Community](https://discord.gg/BEMVTmcPEs)**
+
+---
+
+*If you find this project useful, please consider:*
+- ⭐ **Starring** both the [original repository](https://github.com/astramind-ai/Auralis) and [this fork](https://github.com/groxaxo/Auralis-Enhanced)
+- 🔄 **Sharing** with others who might benefit
+- 🤝 **Contributing** improvements and deployment experiences
+
+**Built with ❤️ by the open-source community**
 
 </div>
