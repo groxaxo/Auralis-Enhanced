@@ -18,6 +18,13 @@ from auralis.common.definitions.openai import VoiceChatCompletionRequest, AudioS
 # Global TTS engine instance
 tts_engine: Optional[TTS] = None
 
+# Mapping of logging level strings to their corresponding logging constants
+logger_str_to_logging = {
+    "info": logging.INFO,
+    "warn": logging.WARNING,
+    "err": logging.ERROR
+}
+
 @asynccontextmanager
 async def lifecycle_manager(app: FastAPI):
     global tts_engine
@@ -37,12 +44,15 @@ async def lifecycle_manager(app: FastAPI):
 # Initialize FastAPI application
 app = FastAPI(lifespan=lifecycle_manager)
 
-# Mapping of logging level strings to their corresponding logging constants
-logger_str_to_logging = {
-    "info": logging.INFO,
-    "warn": logging.WARNING,
-    "err": logging.ERROR
-}
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    global tts_engine
+    return {
+        "status": "healthy" if tts_engine is not None else "initializing",
+        "tts_engine_initialized": tts_engine is not None,
+        "tts_engine_type": str(type(tts_engine))
+    }
 
 def start_tts_engine(args, logging_level):
     """Initialize the Text-to-Speech engine with specified parameters
@@ -75,12 +85,16 @@ async def generate_audio(request: AudioSpeechGenerationRequest):
     Raises:
         HTTPException: If TTS engine is not initialized or generation fails
     """
+    global tts_engine
+    print(f"DEBUG: tts_engine = {tts_engine}, type = {type(tts_engine)}")
     if tts_engine is None:
         raise HTTPException(status_code=500, detail="TTS engine not initialized")
 
     try:
+        print("DEBUG: Creating TTS request...")
         # Create TTSRequest with default params and auralis overrides
         tts_request = request.to_tts_request()
+        print("DEBUG: TTS request created successfully")
 
         # Generate speech and adjust speed
         output = await tts_engine.generate_speech_async(tts_request)
@@ -90,7 +104,11 @@ async def generate_audio(request: AudioSpeechGenerationRequest):
         return Response(content=audio_bytes, media_type=f"audio/{request.response_format}")
 
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": f"Error generating audio: {str(e)}"})
+        import traceback
+        tb = traceback.format_exc()
+        print(f"ERROR in generate_audio: {e}")
+        print(f"Traceback:\n{tb}")
+        return JSONResponse(status_code=500, content={"error": f"Error generating audio: {str(e)}", "traceback": tb})
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: VoiceChatCompletionRequest, authorization: Optional[str] = Header(None)):
@@ -106,6 +124,7 @@ async def chat_completions(request: VoiceChatCompletionRequest, authorization: O
     Raises:
         HTTPException: If TTS engine is not initialized or request fails
     """
+    global tts_engine
     if tts_engine is None:
         raise HTTPException(status_code=500, detail="TTS engine not initialized")
 
