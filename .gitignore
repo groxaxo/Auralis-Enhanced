@@ -143,5 +143,14 @@ playwright/
 
 # Windows
 Thumbs.db
+
+# Project-specific
 /tests/benchmarks/
 /src/entrypoints/
+voice_library/
+generated_audio/
+*.mp3
+*.wav
+*.opus
+!docs/**/*.mp3
+!docs/**/*.wav
