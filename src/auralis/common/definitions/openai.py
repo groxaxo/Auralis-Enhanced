@@ -112,15 +112,18 @@ class AudioSpeechGenerationRequest(BaseModel):
         # Chat completion fields
         input: str = Field(..., description="The textual input to convert")
         model: str = Field(..., description="The model to use for conversion")
-        voice: List[str] = Field(..., description="List of base64-encoded audio files")
-        response_format: Literal["mp3", "opus", "aac", "flac", "wav", "pcm"] = Field(
-            default='mp3', description="List of base64-encoded audio files"
+        voice: Union[str, List[str]] = Field(
+            default="alloy",
+            description="Voice name (alloy, echo, fable, etc.) or list of base64-encoded audio files"
         )
-        speed: float = Field(default=1.0, description="List of base64-encoded audio files"),
+        response_format: Literal["mp3", "opus", "aac", "flac", "wav", "pcm"] = Field(
+            default='mp3', description="Audio output format"
+        )
+        speed: float = Field(default=1.0, description="Playback speed (0.25 to 4.0)")
 
         # TTSRequest parameters
         enhance_speech: bool = Field(default=tts_defaults['enhance_speech'])
-        language: str = Field(default=tts_defaults['language'])
+        language: str = Field(default='auto')  # Use 'auto' for automatic language detection
         max_ref_length: int = Field(default=tts_defaults['max_ref_length'])
         gpt_cond_len: int = Field(default=tts_defaults['gpt_cond_len'])
         gpt_cond_chunk_len: int = Field(default=tts_defaults['gpt_cond_chunk_len'])
@@ -133,18 +136,48 @@ class AudioSpeechGenerationRequest(BaseModel):
 
         @field_validator('voice')
         def validate_speaker_files(cls, v):
-            if not v:
-                raise ValueError("At least one voice file is required")
-            for file in v:
-                try:
-                    base64.b64decode(file)
-                except Exception:
-                    raise ValueError(f"Invalid base64 encoding in voice file")
+            # If it's a string (OpenAI voice name), accept it
+            if isinstance(v, str):
+                return v
+            # If it's a list, validate base64
+            if isinstance(v, list):
+                if not v:
+                    raise ValueError("At least one voice file is required")
+                for file in v:
+                    try:
+                        base64.b64decode(file)
+                    except Exception:
+                        raise ValueError(f"Invalid base64 encoding in voice file")
             return v
 
         def to_tts_request(self) -> TTSRequest:
-            """Convert to TTSRequest with decoded speaker files"""
-            speaker_data_list = [base64.b64decode(f) for f in self.voice]
+            """Convert to TTSRequest with decoded speaker files or default voice"""
+            from pathlib import Path
+            
+            # Handle voice parameter - string (OpenAI voice name) or list (base64 audio)
+            if isinstance(self.voice, str):
+                # Use default reference voice for OpenAI voice names
+                # Try multiple default locations
+                default_paths = [
+                    "/home/op/Auralis/examples/speech.mp3",
+                    "/home/op/Auralis/voice_library/default/sample_0.wav",
+                    Path(__file__).parent.parent.parent.parent / "examples" / "speech.mp3"
+                ]
+                
+                speaker_files = None
+                for path in default_paths:
+                    path_obj = Path(path)
+                    if path_obj.exists():
+                        speaker_files = [str(path_obj)]
+                        break
+                
+                if speaker_files is None:
+                    raise ValueError("No default reference voice found. Please provide voice files as base64-encoded audio.")
+                
+                speaker_data_list = speaker_files
+            else:
+                # Decode base64-encoded audio files
+                speaker_data_list = [base64.b64decode(f) for f in self.voice]
 
             return TTSRequest(
                 text=self.input,

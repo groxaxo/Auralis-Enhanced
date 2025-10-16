@@ -47,12 +47,20 @@ app = FastAPI(lifespan=lifecycle_manager)
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    global tts_engine
-    return {
-        "status": "healthy" if tts_engine is not None else "initializing",
-        "tts_engine_initialized": tts_engine is not None,
-        "tts_engine_type": str(type(tts_engine))
-    }
+    try:
+        global tts_engine
+        return {
+            "status": "healthy" if tts_engine is not None else "initializing",
+            "tts_engine_initialized": tts_engine is not None,
+            "tts_engine_type": str(type(tts_engine)),
+            "tts_engine_value": str(tts_engine)[:100] if tts_engine else "None"
+        }
+    except NameError as e:
+        return {
+            "status": "error",
+            "error": f"NameError: {e}",
+            "message": "tts_engine variable not found in scope"
+        }
 
 def start_tts_engine(args, logging_level):
     """Initialize the Text-to-Speech engine with specified parameters
@@ -98,7 +106,8 @@ async def generate_audio(request: AudioSpeechGenerationRequest):
 
         # Generate speech and adjust speed
         output = await tts_engine.generate_speech_async(tts_request)
-        output = output.change_speed(request.speed)
+        if request.speed != 1.0:
+            output.change_speed(request.speed)
         audio_bytes = output.to_bytes(request.response_format)
 
         return Response(content=audio_bytes, media_type=f"audio/{request.response_format}")

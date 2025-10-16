@@ -1,0 +1,30 @@
+{
+  "colombiana": {
+    "files": [
+      "/home/op/Auralis/voice_library/colombiana/sample_0.wav"
+    ],
+    "created": "2025-10-15T01:56:51.825338",
+    "num_samples": 1
+  },
+  "facu": {
+    "files": [
+      "/home/op/Auralis/voice_library/facu/sample_0.mp3"
+    ],
+    "created": "2025-10-15T02:03:52.588466",
+    "num_samples": 1
+  },
+  "luisiana": {
+    "files": [
+      "/home/op/Auralis/voice_library/luisiana/sample_0.opus"
+    ],
+    "created": "2025-10-15T03:05:14.682496",
+    "num_samples": 1
+  },
+  "elgriego": {
+    "files": [
+      "/home/op/Auralis/voice_library/elgriego/sample_0.mp3"
+    ],
+    "created": "2025-10-15T03:09:07.261334",
+    "num_samples": 1
+  }
+}

@@ -47,8 +47,6 @@ This enhanced version includes several improvements over the original Auralis:
   - Nginx reverse proxy examples
   - GPU memory management strategies
   - Security best practices
-- **[Components Guide](COMPONENTS.md)**: Complete codebase navigation and architecture overview
-- **[Deployment Summary](DEPLOYMENT_SUMMARY.md)**: Quick reference for all deployment options
 
 ### ⚙️ Optimized Configuration
 - **GPU Memory Optimization**: Frontend concurrency reduced to 4 (from 8) for better memory sharing
@@ -638,8 +636,6 @@ We welcome contributions to improve Auralis Enhanced!
 
 ### This Fork (Enhanced)
 - **[Server Deployment Guide](docs/deployment/server-setup.md)**: Complete production deployment documentation
-- **[Components Guide](COMPONENTS.md)**: Codebase architecture and navigation
-- **[Deployment Summary](DEPLOYMENT_SUMMARY.md)**: Quick reference for all changes
 
 ### Original Auralis Project
 - **[Technical Deep Dive](https://www.astramind.ai/post/auralis)**: Original AstraMind AI blog post
