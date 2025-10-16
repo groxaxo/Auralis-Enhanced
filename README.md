@@ -69,21 +69,41 @@ This enhanced version includes several improvements over the original Auralis:
    cd Auralis-Enhanced
    ```
 
-2. **Create a new Conda environment:**
+2. **Install system dependencies (required for audio support):**
+   
+   **Ubuntu/Debian:**
+   ```bash
+   sudo apt-get update
+   sudo apt-get install -y portaudio19-dev python3-dev build-essential
+   ```
+   
+   **Fedora/RHEL/CentOS:**
+   ```bash
+   sudo dnf install -y portaudio-devel python3-devel gcc gcc-c++
+   ```
+   
+   **macOS:**
+   ```bash
+   brew install portaudio
+   ```
+
+3. **Create a new Conda environment:**
    ```bash
    conda create -n auralis_env python=3.10 -y
    ```
 
-3. **Activate the environment:**
+4. **Activate the environment:**
    ```bash
    conda activate auralis_env
    ```
 
-4. **Install dependencies:**
+5. **Install dependencies:**
    ```bash
    pip install -r requirements.txt
    pip install -e .
    ```
+
+For detailed installation troubleshooting, see **[INSTALL.md](INSTALL.md)**.
 
 ### Basic Usage
 
