@@ -1,6 +1,9 @@
-# Welcome to Auralis
+# Welcome to Auralis Enhanced
 
-Auralis is a high-performance text-to-speech (TTS) library that improves upon x-tts with optimized inference and enhanced features.
+**Auralis Enhanced** is a production-ready, high-performance text-to-speech (TTS) library that improves upon x-tts with optimized inference, enhanced features, and comprehensive deployment documentation.
+
+!!! success "Auralis Enhanced"
+    This is the enhanced fork with network deployment capabilities, production-ready configurations, and complete server deployment guides.
 
 ## Features
 
@@ -9,6 +12,13 @@ Auralis is a high-performance text-to-speech (TTS) library that improves upon x-
 - **Easy Integration**: Simple API for both basic and advanced use cases
 - **Flexible Architecture**: Easy to extend with new models and components
 - **Production Ready**: Built-in logging, metrics, and error handling
+- **Network Deployment**: Pre-configured for `0.0.0.0` binding - accessible from any network interface
+- **Comprehensive Guides**: Complete production deployment documentation (systemd, Docker, Nginx)
+
+## Recent Updates
+
+!!! info "Latest Changes"
+    **October 2024**: Repository cleanup - removed test audio files and updated `.gitignore` to exclude audio/voice files (`.mp3`, `.wav`, `.opus`) from version control while preserving documentation assets. This keeps the repository lean and focused on code.
 
 ## Quick Installation
 
@@ -31,7 +41,7 @@ audio = tts.generate("Hello, world!")
 audio.save("output.wav")
 ```
 
-## Why Auralis?
+## Why Auralis Enhanced?
 
 !!! tip "Key Benefits"
     - 🚀 **Faster Inference**: Optimized for speed with VLLM
@@ -39,6 +49,8 @@ audio.save("output.wav")
     - 🎯 **Easy to Use**: Simple, intuitive API
     - 📊 **Monitoring**: Built-in logging and metrics
     - 🔧 **Extensible**: Easy to add new models
+    - 🌐 **Network Ready**: Pre-configured for production server deployment
+    - 📚 **Complete Documentation**: Comprehensive deployment and configuration guides
 
 ## Project Structure
 
