@@ -247,7 +247,14 @@ class TTSOutput:
 
         return TTSOutput(
             array=resampled.squeeze().numpy(),
-            sample_rate=new_sample_rate
+            sample_rate=new_sample_rate,
+            bit_depth=self.bit_depth,
+            bit_rate=self.bit_rate,
+            compression=self.compression,
+            channel=self.channel,
+            start_time=self.start_time,
+            end_time=self.end_time,
+            token_length=self.token_length
         )
 
     def apply_super_resolution(

@@ -9,7 +9,7 @@ audio enhancement with minimal computational overhead (~2MB model).
 License: Apache-2.0 / CC-BY-4.0 (compatible with Auralis Enhanced)
 """
 
-from typing import Optional
+from typing import Optional, Tuple
 import numpy as np
 import torch
 import logging
@@ -55,11 +55,11 @@ class FlashSRProcessor:
             
             logger.info("Loading FlashSR model from Hugging Face Hub...")
             
-            # Download model weights
+            # Download model weights to cache directory
             file_path = hf_hub_download(
                 repo_id="YatharthS/FlashSR",
                 filename="upsampler.pth",
-                local_dir="."
+                cache_dir=None  # Uses default HuggingFace cache (~/.cache/huggingface)
             )
             
             # Initialize the upsampler
@@ -78,7 +78,7 @@ class FlashSRProcessor:
             self._initialized = False
             raise
     
-    def process(self, audio: np.ndarray, sr: int = 16000) -> tuple[np.ndarray, int]:
+    def process(self, audio: np.ndarray, sr: int = 16000) -> Tuple[np.ndarray, int]:
         """Upsample audio from 16kHz to 48kHz using FlashSR.
         
         Args:

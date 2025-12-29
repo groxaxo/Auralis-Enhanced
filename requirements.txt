@@ -34,4 +34,4 @@ transformers
 vllm==0.6.4.post1
 nvidia-ml-py
 numpy
-git+https://github.com/ysharma3501/FlashSR.git  # Audio super-resolution (16kHz -> 48kHz)
+git+https://github.com/ysharma3501/FlashSR.git@6f90f8d  # FlashSR audio super-resolution (pinned to commit)
