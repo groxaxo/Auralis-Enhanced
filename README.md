@@ -137,7 +137,7 @@ For detailed installation troubleshooting, see **[INSTALL.md](INSTALL.md)**.
 
 ### Basic Usage
 
-Try it out via **Python**
+Try it out via **Python** (with FlashSR 48kHz output by default):
 
 ```python
 from auralis import TTS, TTSRequest
@@ -145,15 +145,28 @@ from auralis import TTS, TTSRequest
 # Initialize
 tts = TTS().from_pretrained("AstraMindAI/xttsv2", gpt_model='AstraMindAI/xtts2-gpt')
 
-# Generate speech
+# Generate speech with FlashSR super-resolution (48kHz)
 request = TTSRequest(
-    text="Hello Earth! This is Auralis speaking.",
+    text="Hello Earth! This is Auralis speaking with professional 48kHz quality.",
     speaker_files=['reference.wav']
+    # apply_flashsr=True by default
 )
 
 output = tts.generate_speech(request)
-output.save('hello.wav')
+output.save('hello.wav')  # Saves at 48kHz
+print(f"Sample rate: {output.sample_rate} Hz")  # 48000 Hz
+
+# Optional: Disable FlashSR for faster processing (24kHz)
+request_fast = TTSRequest(
+    text="Faster generation without FlashSR.",
+    speaker_files=['reference.wav'],
+    apply_flashsr=False
+)
+output_fast = tts.generate_speech(request_fast)
+output_fast.save('hello_24khz.wav')  # Saves at 24kHz
 ```
+
+**FlashSR Example**: See `examples/flashsr_example.py` for detailed usage examples.
 
 or via **cli** using the OpenAI-compatible server (now defaults to `0.0.0.0` for network access):
 ```bash
@@ -183,10 +196,13 @@ For detailed deployment options (systemd, Docker, Nginx), see the **[Server Depl
 - Automatic language detection
 
 ### Audio Quality
-- Voice cloning from short samples
-- Background noise reduction
-- Speech clarity enhancement
-- Volume normalization
+- **🎵 Professional 48kHz Output**: FlashSR audio super-resolution enabled by default
+- **Ultra-Fast Enhancement**: 200-400x real-time processing, negligible overhead
+- **Voice cloning** from short samples
+- **Background noise reduction**
+- **Speech clarity enhancement**
+- **Volume normalization**
+- **Broadcast-quality output** for audiobooks, podcasts, and professional production
 
 ## 🚀 Server Deployment
 
