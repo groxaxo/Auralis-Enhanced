@@ -15,9 +15,13 @@ from torio.io import CodecConfig
 
 @dataclass
 class TTSOutput:
-    """Container for TTS inference output with integrated audio utilities"""
+    """Container for TTS inference output with integrated audio utilities
+    
+    This class includes FlashSR audio super-resolution for enhanced output quality.
+    By default, audio is upsampled from 24kHz to 48kHz using FlashSR for professional-grade output.
+    """
     array: Union[np.ndarray, bytes]
-    sample_rate: int = 24000
+    sample_rate: int = 24000  # Initial output at 24kHz, upgraded to 48kHz with FlashSR
     bit_depth: int = 32
     bit_rate: int = 192 # kbps
     compression: int = 10 #
@@ -26,6 +30,7 @@ class TTSOutput:
     start_time: Optional[float] = None
     end_time: Optional[float] = None
     token_length: Optional[int] = None
+    _flashsr_applied: bool = False  # Track if FlashSR has been applied
 
 
     def __post_init__(self):
@@ -242,8 +247,82 @@ class TTSOutput:
 
         return TTSOutput(
             array=resampled.squeeze().numpy(),
-            sample_rate=new_sample_rate
+            sample_rate=new_sample_rate,
+            bit_depth=self.bit_depth,
+            bit_rate=self.bit_rate,
+            compression=self.compression,
+            channel=self.channel,
+            start_time=self.start_time,
+            end_time=self.end_time,
+            token_length=self.token_length
         )
+
+    def apply_super_resolution(
+        self,
+        method: str = 'flashsr',
+        device: Optional[str] = None
+    ) -> 'TTSOutput':
+        """Apply audio super-resolution for enhanced quality.
+        
+        This method upsamples the audio to 48kHz using FlashSR for professional-quality output.
+        FlashSR provides 200-400x real-time processing with minimal overhead (~2MB model).
+        
+        Args:
+            method (str): Super-resolution method ('flashsr' supported)
+            device (str, optional): Processing device ('cuda' or 'cpu')
+        
+        Returns:
+            TTSOutput: New instance with 48kHz super-resolved audio
+            
+        Example:
+            >>> output = tts.generate_speech(request)
+            >>> hq_output = output.apply_super_resolution()
+            >>> hq_output.save('high_quality.wav')  # 48kHz
+        """
+        # Avoid double application
+        if self._flashsr_applied:
+            return self
+            
+        if method != 'flashsr':
+            raise ValueError(
+                f"Unknown super-resolution method: {method}. "
+                f"Supported: 'flashsr'"
+            )
+        
+        try:
+            from auralis.common.enhancers.flashsr import get_flashsr_processor
+            
+            # Downsample to 16kHz for FlashSR input
+            audio_16k = self.resample(16000)
+            
+            # Apply FlashSR super-resolution
+            processor = get_flashsr_processor(device=device)
+            enhanced_array, enhanced_sr = processor.process(
+                audio_16k.array,
+                sr=16000
+            )
+            
+            # Create new output with enhanced audio
+            enhanced_output = TTSOutput(
+                array=enhanced_array,
+                sample_rate=enhanced_sr,
+                bit_depth=self.bit_depth,
+                bit_rate=self.bit_rate,
+                compression=self.compression,
+                channel=self.channel,
+                start_time=self.start_time,
+                end_time=self.end_time,
+                token_length=self.token_length
+            )
+            enhanced_output._flashsr_applied = True
+            
+            return enhanced_output
+            
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"FlashSR enhancement failed: {e}. Returning original audio.")
+            return self
 
     def get_info(self) -> Tuple[int, int, float]:
         """Get audio information.
