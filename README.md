@@ -683,6 +683,7 @@ We welcome contributions to improve Auralis Enhanced!
 
 ### This Fork (Enhanced)
 - **[Server Deployment Guide](docs/deployment/server-setup.md)**: Complete production deployment documentation
+- **[FlashSR Integration Analysis](docs/analysis/flashsr-integration-analysis.md)**: Compatibility analysis for audio super-resolution enhancement
 
 ### Original Auralis Project
 - **[Technical Deep Dive](https://www.astramind.ai/post/auralis)**: Original AstraMind AI blog post

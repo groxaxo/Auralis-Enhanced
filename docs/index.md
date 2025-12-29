@@ -73,6 +73,7 @@ Check out our [Quick Start Guide](getting-started/quickstart.md) to begin using 
 - [Deployment Guide](advanced/deployment.md): Deploy in production
 - [Adding Models](advanced/adding-models.md): Extend with your models
 - [Using OAI Server](advanced/using-oai-server.md): OpenAI API compatibility
+- [FlashSR Integration Analysis](analysis/flashsr-integration-analysis.md): Audio super-resolution compatibility analysis
 - [Logging Reference](api/common/logging.md): Logging system
 - [Documentation Guide](contributing/documentation.md): Contribute to docs
 
