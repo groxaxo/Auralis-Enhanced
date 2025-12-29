@@ -188,6 +188,9 @@ class TTSRequest:
     repetition_penalty: float = 5.0
     length_penalty: float = 1.0
     do_sample: bool = True
+    
+    # Audio super-resolution (FlashSR)
+    apply_flashsr: bool = True  # Apply FlashSR super-resolution by default for 48kHz output
 
     def __post_init__(self):
         """Initialize request after dataclass creation.

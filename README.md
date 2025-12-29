@@ -22,13 +22,14 @@
 
 # 🌌 Auralis Enhanced
 
-### *Production-Ready Text-to-Speech with Voice Cloning & Network Deployment*
+### *Production-Ready Text-to-Speech with Voice Cloning, FlashSR Audio Enhancement & Network Deployment*
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![GitHub](https://img.shields.io/badge/GitHub-Auralis--Enhanced-blue.svg)](https://github.com/groxaxo/Auralis-Enhanced)
+[![FlashSR](https://img.shields.io/badge/Audio-48kHz%20FlashSR-brightgreen.svg)](https://huggingface.co/YatharthS/FlashSR)
 
-*Process an entire novel in minutes, not hours. Convert the first Harry Potter book to speech in just 10 minutes!*
+*Process an entire novel in minutes, not hours. Convert the first Harry Potter book to speech in just 10 minutes—now with professional 48kHz audio quality powered by FlashSR!*
 
 [Quick Start](#quick-start-) • [Deployment](#-server-deployment) • [Features](#key-features-) • [What's New](#-whats-new-in-this-fork) • [Credits](#-acknowledgments)
 
@@ -38,11 +39,12 @@
 
 ## 🚀 What is Auralis Enhanced?
 
-**Auralis Enhanced** is a production-ready fork of the original Auralis TTS engine, optimized for network deployment and real-world server usage. This version includes comprehensive deployment documentation, network accessibility improvements, and GPU memory optimizations for running both backend API and frontend UI simultaneously.
+**Auralis Enhanced** is a production-ready fork of the original Auralis TTS engine, optimized for network deployment and real-world server usage. This version includes comprehensive deployment documentation, network accessibility improvements, **FlashSR audio super-resolution for professional 48kHz output**, and GPU memory optimizations for running both backend API and frontend UI simultaneously.
 
 ### ⚡ Performance Highlights
 
 - **Ultra-Fast Processing**: Convert the entire first Harry Potter book to speech in 10 minutes (**realtime factor of ≈ 0.02x!**)
+- **🎵 FlashSR Audio Super-Resolution**: Automatic 48kHz output via ultra-fast FlashSR (200-400x real-time, only 2MB model)
 - **Voice Cloning**: Clone any voice from short audio samples
 - **Audio Enhancement**: Automatically enhance reference audio quality - works even with low-quality microphones
 - **Memory Efficient**: Configurable memory footprint via `scheduler_max_concurrency`
@@ -58,6 +60,7 @@ This enhanced version includes several improvements over the original Auralis:
 ### 📋 Latest Updates
 
 **Recent Changes:**
+- **🎵 FlashSR Integration (December 2024)**: Automatic audio super-resolution from 24kHz to 48kHz for professional broadcast-quality output using the ultra-fast FlashSR model (200-400x real-time processing, negligible overhead)
 - **Repository Cleanup (October 2024)**: Removed test audio files and updated `.gitignore` to exclude audio/voice files (`.mp3`, `.wav`, `.opus`) from version control, keeping the repository lean while preserving documentation assets
 - **Enhanced Documentation**: Comprehensive deployment guides and production-ready configurations
 - **Network Optimization**: Pre-configured for network deployment with `0.0.0.0` binding

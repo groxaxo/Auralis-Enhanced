@@ -807,11 +807,18 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                             )).cpu().detach().numpy().squeeze()
                          # noqa
 
-                        # yield the audio output
-                        yield TTSOutput(array= wav,
-                                        start_time = request.start_time,
-                                        token_length = len(output.outputs[0].token_ids)
-                                        )
+                        # Create the audio output
+                        tts_output = TTSOutput(
+                            array=wav,
+                            start_time=request.start_time,
+                            token_length=len(output.outputs[0].token_ids)
+                        )
+                        
+                        # Apply FlashSR super-resolution if enabled
+                        if request.apply_flashsr:
+                            tts_output = tts_output.apply_super_resolution()
+                        
+                        yield tts_output
 
 
 
