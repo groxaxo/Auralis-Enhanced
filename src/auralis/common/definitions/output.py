@@ -10,21 +10,22 @@ from IPython.display import Audio, display
 import numpy as np
 import torch
 import torchaudio
-from torio.io import CodecConfig
+from torchaudio.io import CodecConfig
 
 
 @dataclass
 class TTSOutput:
     """Container for TTS inference output with integrated audio utilities
-    
+
     This class includes FlashSR audio super-resolution for enhanced output quality.
     By default, audio is upsampled from 24kHz to 48kHz using FlashSR for professional-grade output.
     """
+
     array: Union[np.ndarray, bytes]
     sample_rate: int = 24000  # Initial output at 24kHz, upgraded to 48kHz with FlashSR
     bit_depth: int = 32
-    bit_rate: int = 192 # kbps
-    compression: int = 10 #
+    bit_rate: int = 192  # kbps
+    compression: int = 10  #
     channel: int = 1
 
     start_time: Optional[float] = None
@@ -32,17 +33,16 @@ class TTSOutput:
     token_length: Optional[int] = None
     _flashsr_applied: bool = False  # Track if FlashSR has been applied
 
-
     def __post_init__(self):
         if isinstance(self.array, bytes):
             self.array = np.frombuffer(self.array, dtype=np.int16)
-            #normalize in the range
+            # normalize in the range
             self.array = self.array.astype(np.float32) / 32768.0
             fade_length = 100
             fade_in = np.linspace(0, 1, fade_length)
             self.array[:fade_length] *= fade_in
 
-    def change_speed(self, speed_factor: float) -> 'TTSOutput':
+    def change_speed(self, speed_factor: float) -> "TTSOutput":
         """
         Change audio speed while preserving quality and minimizing distortion.
         Uses phase vocoder for better quality at extreme speed changes.
@@ -66,7 +66,11 @@ class TTSOutput:
             return self
 
         # Ensure float32
-        wav = self.array.astype(np.float32) if self.array.dtype != np.float32 else self.array
+        wav = (
+            self.array.astype(np.float32)
+            if self.array.dtype != np.float32
+            else self.array
+        )
 
         # Parameters for STFT
         n_fft = 2048
@@ -77,27 +81,19 @@ class TTSOutput:
 
         # Time-stretch using phase vocoder
         modified_stft = librosa.phase_vocoder(
-            D,
-            rate=speed_factor,
-            hop_length=hop_length
+            D, rate=speed_factor, hop_length=hop_length
         )
 
         # Inverse STFT without forcing length
-        modified = librosa.istft(
-            modified_stft,
-            hop_length=hop_length
-        )
+        modified = librosa.istft(modified_stft, hop_length=hop_length)
 
         # Normalize to prevent clipping
         modified = librosa.util.normalize(modified, norm=np.inf)
 
-        return TTSOutput(
-            array=modified,
-            sample_rate=self.sample_rate
-        )
+        return TTSOutput(array=modified, sample_rate=self.sample_rate)
 
     @staticmethod
-    def combine_outputs(outputs: List['TTSOutput']) -> 'TTSOutput':
+    def combine_outputs(outputs: List["TTSOutput"]) -> "TTSOutput":
         """Combine multiple TTSOutput instances into a single instance.
 
         Args:
@@ -110,10 +106,7 @@ class TTSOutput:
         combined_audio = np.concatenate([out.array for out in outputs])
 
         # Use sample rate of first output
-        return TTSOutput(
-            array=combined_audio,
-            sample_rate=outputs[0].sample_rate
-        )
+        return TTSOutput(array=combined_audio, sample_rate=outputs[0].sample_rate)
 
     def to_tensor(self) -> Union[torch.Tensor, np.ndarray]:
         """Convert numpy array to torch tensor"""
@@ -121,7 +114,7 @@ class TTSOutput:
             return torch.from_numpy(self.array)
         return self.array
 
-    def to_bytes(self, format: str = 'wav', sample_width: int = 2) -> bytes:
+    def to_bytes(self, format: str = "wav", sample_width: int = 2) -> bytes:
         """Convert audio to bytes format.
 
         Args:
@@ -143,7 +136,7 @@ class TTSOutput:
 
         buffer = io.BytesIO()
 
-        if format in ['wav', 'flac']:
+        if format in ["wav", "flac"]:
             torchaudio.save(
                 buffer,
                 wav_tensor,
@@ -151,33 +144,35 @@ class TTSOutput:
                 format=format,
                 encoding="PCM_S" if sample_width == 2 else "PCM_F",
                 bits_per_sample=sample_width * 8,
-                compression = CodecConfig(compression_level=min(8, self.compression)) if format == 'flac' else None
+                compression=CodecConfig(compression_level=min(8, self.compression))
+                if format == "flac"
+                else None,
             )
-        elif format == 'mp3':
+        elif format == "mp3":
             torchaudio.save(
                 buffer,
                 wav_tensor,
                 self.sample_rate,
                 format="mp3",
-                compression = CodecConfig(bit_rate=self.bit_rate)
+                compression=CodecConfig(bit_rate=self.bit_rate),
             )
-        elif format == 'opus':
+        elif format == "opus":
             torchaudio.save(
                 buffer,
                 wav_tensor,
                 self.sample_rate,
                 format="opus",
-                compression = CodecConfig(compression_level=self.compression)
+                compression=CodecConfig(compression_level=self.compression),
             )
-        elif format == 'aac':
+        elif format == "aac":
             torchaudio.save(
                 buffer,
                 wav_tensor,
                 self.sample_rate,
                 format="adts",
-                compression = CodecConfig(bit_rate=self.bit_rate)
+                compression=CodecConfig(bit_rate=self.bit_rate),
             )
-        elif format == 'pcm':
+        elif format == "pcm":
             # Scale to appropriate range based on sample width
             if sample_width == 2:  # 16-bit
                 wav_tensor = (wav_tensor * 32767).to(torch.int16)
@@ -187,14 +182,18 @@ class TTSOutput:
                 wav_tensor = (wav_tensor * 127).to(torch.int8)
             return wav_tensor.cpu().numpy().tobytes()
         else:
-            raise ValueError(f"Unsupported format: {format}. Supported formats are: mp3, opus, aac, flac, wav, pcm")
+            raise ValueError(
+                f"Unsupported format: {format}. Supported formats are: mp3, opus, aac, flac, wav, pcm"
+            )
 
         return buffer.getvalue()
 
-    def save(self,
-             filename: Union[str, Path],
-             sample_rate: Optional[int] = None,
-             format: Optional[str] = None) -> None:
+    def save(
+        self,
+        filename: Union[str, Path],
+        sample_rate: Optional[int] = None,
+        format: Optional[str] = None,
+    ) -> None:
         """Save audio to file.
 
         Args:
@@ -209,9 +208,7 @@ class TTSOutput:
         # Resample if needed
         if sample_rate and sample_rate != self.sample_rate:
             wav_tensor = torchaudio.functional.resample(
-                wav_tensor,
-                orig_freq=self.sample_rate,
-                new_freq=sample_rate
+                wav_tensor, orig_freq=self.sample_rate, new_freq=sample_rate
             )
         else:
             sample_rate = self.sample_rate
@@ -223,10 +220,10 @@ class TTSOutput:
             sample_rate,
             format=format,
             bits_per_sample=self.bit_depth,
-            channels_first=self.channel
+            channels_first=self.channel,
         )
 
-    def resample(self, new_sample_rate: int) -> 'TTSOutput':
+    def resample(self, new_sample_rate: int) -> "TTSOutput":
         """Create new TTSOutput with resampled audio.
 
         Args:
@@ -240,9 +237,7 @@ class TTSOutput:
             wav_tensor = wav_tensor.unsqueeze(0)
 
         resampled = torchaudio.functional.resample(
-            wav_tensor,
-            orig_freq=self.sample_rate,
-            new_freq=new_sample_rate
+            wav_tensor, orig_freq=self.sample_rate, new_freq=new_sample_rate
         )
 
         return TTSOutput(
@@ -254,26 +249,24 @@ class TTSOutput:
             channel=self.channel,
             start_time=self.start_time,
             end_time=self.end_time,
-            token_length=self.token_length
+            token_length=self.token_length,
         )
 
     def apply_super_resolution(
-        self,
-        method: str = 'flashsr',
-        device: Optional[str] = None
-    ) -> 'TTSOutput':
+        self, method: str = "flashsr", device: Optional[str] = None
+    ) -> "TTSOutput":
         """Apply audio super-resolution for enhanced quality.
-        
+
         This method upsamples the audio to 48kHz using FlashSR for professional-quality output.
         FlashSR provides 200-400x real-time processing with minimal overhead (~2MB model).
-        
+
         Args:
             method (str): Super-resolution method ('flashsr' supported)
             device (str, optional): Processing device ('cuda' or 'cpu')
-        
+
         Returns:
             TTSOutput: New instance with 48kHz super-resolved audio
-            
+
         Example:
             >>> output = tts.generate_speech(request)
             >>> hq_output = output.apply_super_resolution()
@@ -282,26 +275,22 @@ class TTSOutput:
         # Avoid double application
         if self._flashsr_applied:
             return self
-            
-        if method != 'flashsr':
+
+        if method != "flashsr":
             raise ValueError(
-                f"Unknown super-resolution method: {method}. "
-                f"Supported: 'flashsr'"
+                f"Unknown super-resolution method: {method}. Supported: 'flashsr'"
             )
-        
+
         try:
             from auralis.common.enhancers.flashsr import get_flashsr_processor
-            
+
             # Downsample to 16kHz for FlashSR input
             audio_16k = self.resample(16000)
-            
+
             # Apply FlashSR super-resolution
             processor = get_flashsr_processor(device=device)
-            enhanced_array, enhanced_sr = processor.process(
-                audio_16k.array,
-                sr=16000
-            )
-            
+            enhanced_array, enhanced_sr = processor.process(audio_16k.array, sr=16000)
+
             # Create new output with enhanced audio
             enhanced_output = TTSOutput(
                 array=enhanced_array,
@@ -312,16 +301,19 @@ class TTSOutput:
                 channel=self.channel,
                 start_time=self.start_time,
                 end_time=self.end_time,
-                token_length=self.token_length
+                token_length=self.token_length,
             )
             enhanced_output._flashsr_applied = True
-            
+
             return enhanced_output
-            
+
         except Exception as e:
             import logging
+
             logger = logging.getLogger(__name__)
-            logger.warning(f"FlashSR enhancement failed: {e}. Returning original audio.")
+            logger.warning(
+                f"FlashSR enhancement failed: {e}. Returning original audio."
+            )
             return self
 
     def get_info(self) -> Tuple[int, int, float]:
@@ -335,7 +327,7 @@ class TTSOutput:
         return n_samples, self.sample_rate, duration
 
     @classmethod
-    def from_tensor(cls, tensor: torch.Tensor, sample_rate: int = 24000) -> 'TTSOutput':
+    def from_tensor(cls, tensor: torch.Tensor, sample_rate: int = 24000) -> "TTSOutput":
         """Create TTSOutput from torch tensor.
 
         Args:
@@ -345,13 +337,10 @@ class TTSOutput:
         Returns:
             New TTSOutput instance
         """
-        return cls(
-            array=tensor.squeeze().cpu().numpy(),
-            sample_rate=sample_rate
-        )
+        return cls(array=tensor.squeeze().cpu().numpy(), sample_rate=sample_rate)
 
     @classmethod
-    def from_file(cls, filename: Union[str, Path]) -> 'TTSOutput':
+    def from_file(cls, filename: Union[str, Path]) -> "TTSOutput":
         """Create TTSOutput from audio file.
 
         Args:
@@ -386,7 +375,7 @@ class TTSOutput:
         Returns Audio widget if in notebook, None otherwise."""
         try:
             # Convert to bytes
-            audio_bytes = self.to_bytes(format='wav')
+            audio_bytes = self.to_bytes(format="wav")
 
             # Create and display audio widget
             audio_widget = Audio(audio_bytes, rate=self.sample_rate, autoplay=False)
