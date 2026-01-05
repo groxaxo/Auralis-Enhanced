@@ -100,7 +100,6 @@ class VoiceChatCompletionRequest(BaseModel):
             repetition_penalty=self.repetition_penalty,
             length_penalty=self.length_penalty,
             do_sample=self.do_sample,
-            apply_flashsr=True,
         )
 
     def to_openai_request(self) -> Dict[str, Any]:
@@ -233,5 +232,4 @@ class AudioSpeechGenerationRequest(BaseModel):
             repetition_penalty=self.repetition_penalty,
             length_penalty=self.length_penalty,
             do_sample=self.do_sample,
-            apply_flashsr=True,
         )

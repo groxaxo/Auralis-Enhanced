@@ -168,7 +168,7 @@ def build_gradio_ui():
                             label="Enhance Reference Speech", value=False
                         )
                         apply_flashsr = gr.Checkbox(
-                            label="Enable FlashSR upscaling (48kHz output)", value=True
+                            label="Enable FlashSR upscaling (48kHz output)", value=False
                         )
                         temperature = gr.Slider(
                             label="Temperature",
@@ -261,7 +261,7 @@ def build_gradio_ui():
                             label="Enhance Reference Speech", value=False
                         )
                         apply_flashsr_file = gr.Checkbox(
-                            label="Enable FlashSR upscaling (48kHz output)", value=True
+                            label="Enable FlashSR upscaling (48kHz output)", value=False
                         )
                         temperature_file = gr.Slider(
                             label="Temperature",
@@ -395,7 +395,7 @@ def build_gradio_ui():
                             label="Enhance Reference Speech", value=True
                         )
                         apply_flashsr_mic = gr.Checkbox(
-                            label="Enable FlashSR upscaling (48kHz output)", value=True
+                            label="Enable FlashSR upscaling (48kHz output)", value=False
                         )
                         temperature_mic = gr.Slider(
                             label="Temperature",

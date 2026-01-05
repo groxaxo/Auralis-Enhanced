@@ -208,9 +208,7 @@ class TTSRequest:
     do_sample: bool = True
 
     # Audio super-resolution (FlashSR)
-    apply_flashsr: bool = (
-        True  # Apply FlashSR super-resolution by default for 48kHz output
-    )
+    apply_flashsr: bool = False  # Disable FlashSR by default for compatibility
 
     def __post_init__(self):
         """Initialize request after dataclass creation.
