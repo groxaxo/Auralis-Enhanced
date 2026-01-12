@@ -51,21 +51,21 @@ Below are 5 examples per language demonstrating the upgrade from standard TTS to
 
 | ID | Text Segment | Base (24kHz) | Enhanced (48kHz) |
 | :--- | :--- | :--- | :--- |
-| 1 | *"Auralis Enhanced is a high-performance..."* | <audio controls src="samples/sample_en_1_base.wav"></audio> | <audio controls src="samples/sample_en_1_enhanced.wav"></audio> |
-| 2 | *"It offers seamless voice cloning..."* | <audio controls src="samples/sample_en_2_base.wav"></audio> | <audio controls src="samples/sample_en_2_enhanced.wav"></audio> |
-| 3 | *"With FlashSR technology..."* | <audio controls src="samples/sample_en_3_base.wav"></audio> | <audio controls src="samples/sample_en_3_enhanced.wav"></audio> |
-| 4 | *"Deploy it on your own infrastructure..."* | <audio controls src="samples/sample_en_4_base.wav"></audio> | <audio controls src="samples/sample_en_4_enhanced.wav"></audio> |
-| 5 | *"Experience the future of voice..."* | <audio controls src="samples/sample_en_5_base.wav"></audio> | <audio controls src="samples/sample_en_5_enhanced.wav"></audio> |
+| 1 | *"Auralis Enhanced is a high-performance..."* | [🔊 Play](samples/sample_en_1_base.wav?raw=true) | [🔊 Play](samples/sample_en_1_enhanced.wav?raw=true) |
+| 2 | *"It offers seamless voice cloning..."* | [🔊 Play](samples/sample_en_2_base.wav?raw=true) | [🔊 Play](samples/sample_en_2_enhanced.wav?raw=true) |
+| 3 | *"With FlashSR technology..."* | [🔊 Play](samples/sample_en_3_base.wav?raw=true) | [🔊 Play](samples/sample_en_3_enhanced.wav?raw=true) |
+| 4 | *"Deploy it on your own infrastructure..."* | [🔊 Play](samples/sample_en_4_base.wav?raw=true) | [🔊 Play](samples/sample_en_4_enhanced.wav?raw=true) |
+| 5 | *"Experience the future of voice..."* | [🔊 Play](samples/sample_en_5_base.wav?raw=true) | [🔊 Play](samples/sample_en_5_enhanced.wav?raw=true) |
 
 ### 🇪🇸 Spanish Comparison
 
 | ID | Text Segment | Base (24kHz) | Enhanced (48kHz) |
 | :--- | :--- | :--- | :--- |
-| 1 | *"Auralis Enhanced es un motor..."* | <audio controls src="samples/sample_es_1_base.wav"></audio> | <audio controls src="samples/sample_es_1_enhanced.wav"></audio> |
-| 2 | *"Ofrece clonación de voz..."* | <audio controls src="samples/sample_es_2_base.wav"></audio> | <audio controls src="samples/sample_es_2_enhanced.wav"></audio> |
-| 3 | *"Con la tecnología FlashSR..."* | <audio controls src="samples/sample_es_3_base.wav"></audio> | <audio controls src="samples/sample_es_3_enhanced.wav"></audio> |
-| 4 | *"Implementelo en su propia..."* | <audio controls src="samples/sample_es_4_base.wav"></audio> | <audio controls src="samples/sample_es_4_enhanced.wav"></audio> |
-| 5 | *"Experimente el futuro..."* | <audio controls src="samples/sample_es_5_base.wav"></audio> | <audio controls src="samples/sample_es_5_enhanced.wav"></audio> |
+| 1 | *"Auralis Enhanced es un motor..."* | [🔊 Play](samples/sample_es_1_base.wav?raw=true) | [🔊 Play](samples/sample_es_1_enhanced.wav?raw=true) |
+| 2 | *"Ofrece clonación de voz..."* | [🔊 Play](samples/sample_es_2_base.wav?raw=true) | [🔊 Play](samples/sample_es_2_enhanced.wav?raw=true) |
+| 3 | *"Con la tecnología FlashSR..."* | [🔊 Play](samples/sample_es_3_base.wav?raw=true) | [🔊 Play](samples/sample_es_3_enhanced.wav?raw=true) |
+| 4 | *"Implementelo en su propia..."* | [🔊 Play](samples/sample_es_4_base.wav?raw=true) | [🔊 Play](samples/sample_es_4_enhanced.wav?raw=true) |
+| 5 | *"Experimente el futuro..."* | [🔊 Play](samples/sample_es_5_base.wav?raw=true) | [🔊 Play](samples/sample_es_5_enhanced.wav?raw=true) |
 
 ---
 

@@ -67,7 +67,6 @@ nav:
   - Advanced Topics:
     - Adding Models: advanced/adding-models.md
     - Using OAI Server: advanced/using-oai-server.md
-    - Performance Tuning: advanced/performance-tuning.md
     - Deployment: advanced/deployment.md
   - Contributing:
     - Documentation: contributing/documentation.md 
