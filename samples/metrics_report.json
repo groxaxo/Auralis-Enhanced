@@ -1,222 +1,152 @@
 [
-  {
-    "lang": "en",
-    "id": 1,
-    "mode": "base",
-    "text": "Auralis Enhanced is a high-performance text-to-speech engine designed for production environments.",
-    "filename": "sample_en_1_base.wav",
-    "gen_time": 4.959543943405151,
-    "audio_duration": 4.917333333333334,
-    "rtf": 1.0085840448898762,
-    "vram_mb": 4469.0
-  },
-  {
-    "lang": "en",
-    "id": 1,
-    "mode": "enhanced",
-    "text": "Auralis Enhanced is a high-performance text-to-speech engine designed for production environments.",
-    "filename": "sample_en_1_enhanced.wav",
-    "gen_time": 4.329520225524902,
-    "audio_duration": 4.736,
-    "rtf": 0.9141723449165757,
-    "vram_mb": 5165.0
-  },
-  {
-    "lang": "en",
-    "id": 2,
-    "mode": "base",
-    "text": "It offers seamless voice cloning, audio super-resolution, and lightning-fast inference for a global audience.",
-    "filename": "sample_en_2_base.wav",
-    "gen_time": 4.300021648406982,
-    "audio_duration": 6.634666666666667,
-    "rtf": 0.6481141953989623,
-    "vram_mb": 5861.0
-  },
-  {
-    "lang": "en",
-    "id": 2,
-    "mode": "enhanced",
-    "text": "It offers seamless voice cloning, audio super-resolution, and lightning-fast inference for a global audience.",
-    "filename": "sample_en_2_enhanced.wav",
-    "gen_time": 5.407839775085449,
-    "audio_duration": 6.869375,
-    "rtf": 0.7872389809968809,
-    "vram_mb": 6535.0
-  },
-  {
-    "lang": "en",
-    "id": 3,
-    "mode": "base",
-    "text": "With FlashSR technology, standard synthesis is instantly upscaled to professional 48kHz quality.",
-    "filename": "sample_en_3_base.wav",
-    "gen_time": 6.141710042953491,
-    "audio_duration": 8.032,
-    "rtf": 0.7646551348298669,
-    "vram_mb": 7229.0
-  },
-  {
-    "lang": "en",
-    "id": 3,
-    "mode": "enhanced",
-    "text": "With FlashSR technology, standard synthesis is instantly upscaled to professional 48kHz quality.",
-    "filename": "sample_en_3_enhanced.wav",
-    "gen_time": 5.995357513427734,
-    "audio_duration": 6.8266875,
-    "rtf": 0.8782235181305331,
-    "vram_mb": 7903.0
-  },
-  {
-    "lang": "en",
-    "id": 4,
-    "mode": "base",
-    "text": "Deploy it on your own infrastructure to ensure data privacy and unlimited scalability.",
-    "filename": "sample_en_4_base.wav",
-    "gen_time": 6.137192249298096,
-    "audio_duration": 6.08,
-    "rtf": 1.0094066199503446,
-    "vram_mb": 8595.0
-  },
-  {
-    "lang": "en",
-    "id": 4,
-    "mode": "enhanced",
-    "text": "Deploy it on your own infrastructure to ensure data privacy and unlimited scalability.",
-    "filename": "sample_en_4_enhanced.wav",
-    "gen_time": 5.0994713306427,
-    "audio_duration": 4.64,
-    "rtf": 1.0990239936729957,
-    "vram_mb": 9269.0
-  },
-  {
-    "lang": "en",
-    "id": 5,
-    "mode": "base",
-    "text": "Experience the future of voice generation, where speed meets impeccable audio fidelity.",
-    "filename": "sample_en_5_base.wav",
-    "gen_time": 4.912050247192383,
-    "audio_duration": 5.013333333333334,
-    "rtf": 0.9797972567537997,
-    "vram_mb": 9963.0
-  },
-  {
-    "lang": "en",
-    "id": 5,
-    "mode": "enhanced",
-    "text": "Experience the future of voice generation, where speed meets impeccable audio fidelity.",
-    "filename": "sample_en_5_enhanced.wav",
-    "gen_time": 5.91611123085022,
-    "audio_duration": 5.3866875,
-    "rtf": 1.0982837283302995,
-    "vram_mb": 10637.0
-  },
-  {
-    "lang": "es",
-    "id": 1,
-    "mode": "base",
-    "text": "Auralis Enhanced es un motor de texto a voz de alto rendimiento dise\u00f1ado para entornos de producci\u00f3n.",
-    "filename": "sample_es_1_base.wav",
-    "gen_time": 5.24939751625061,
-    "audio_duration": 6.496,
-    "rtf": 0.8080969082898106,
-    "vram_mb": 10639.0
-  },
-  {
-    "lang": "es",
-    "id": 1,
-    "mode": "enhanced",
-    "text": "Auralis Enhanced es un motor de texto a voz de alto rendimiento dise\u00f1ado para entornos de producci\u00f3n.",
-    "filename": "sample_es_1_enhanced.wav",
-    "gen_time": 4.79640007019043,
-    "audio_duration": 5.941375,
-    "rtf": 0.8072878870952312,
-    "vram_mb": 10639.0
-  },
-  {
-    "lang": "es",
-    "id": 2,
-    "mode": "base",
-    "text": "Ofrece clonaci\u00f3n de voz sin interrupciones, s\u00faper resoluci\u00f3n de audio e inferencia ultrarr\u00e1pida.",
-    "filename": "sample_es_2_base.wav",
-    "gen_time": 5.708398818969727,
-    "audio_duration": 5.984,
-    "rtf": 0.9539436529026949,
-    "vram_mb": 10639.0
-  },
-  {
-    "lang": "es",
-    "id": 2,
-    "mode": "enhanced",
-    "text": "Ofrece clonaci\u00f3n de voz sin interrupciones, s\u00faper resoluci\u00f3n de audio e inferencia ultrarr\u00e1pida.",
-    "filename": "sample_es_2_enhanced.wav",
-    "gen_time": 5.801886081695557,
-    "audio_duration": 5.2906875,
-    "rtf": 1.0966223353194753,
-    "vram_mb": 10639.0
-  },
-  {
-    "lang": "es",
-    "id": 3,
-    "mode": "base",
-    "text": "Con la tecnolog\u00eda FlashSR, la s\u00edntesis est\u00e1ndar se escala instant\u00e1neamente a una calidad profesional de 48kHz.",
-    "filename": "sample_es_3_base.wav",
-    "gen_time": 9.121110677719116,
-    "audio_duration": 10.442666666666666,
-    "rtf": 0.8734465025905691,
-    "vram_mb": 10639.0
-  },
-  {
-    "lang": "es",
-    "id": 3,
-    "mode": "enhanced",
-    "text": "Con la tecnolog\u00eda FlashSR, la s\u00edntesis est\u00e1ndar se escala instant\u00e1neamente a una calidad profesional de 48kHz.",
-    "filename": "sample_es_3_enhanced.wav",
-    "gen_time": 6.556358814239502,
-    "audio_duration": 8.032,
-    "rtf": 0.8162797328485436,
-    "vram_mb": 10639.0
-  },
-  {
-    "lang": "es",
-    "id": 4,
-    "mode": "base",
-    "text": "Implementelo en su propia infraestructura para garantizar la privacidad de los datos y una escalabilidad ilimitada.",
-    "filename": "sample_es_4_base.wav",
-    "gen_time": 5.2934863567352295,
-    "audio_duration": 6.4,
-    "rtf": 0.8271072432398796,
-    "vram_mb": 10639.0
-  },
-  {
-    "lang": "es",
-    "id": 4,
-    "mode": "enhanced",
-    "text": "Implementelo en su propia infraestructura para garantizar la privacidad de los datos y una escalabilidad ilimitada.",
-    "filename": "sample_es_4_enhanced.wav",
-    "gen_time": 5.087606430053711,
-    "audio_duration": 6.8266875,
-    "rtf": 0.7452525738220346,
-    "vram_mb": 10639.0
-  },
-  {
-    "lang": "es",
-    "id": 5,
-    "mode": "base",
-    "text": "Experimente el futuro de la generaci\u00f3n de voz, donde la velocidad se une a una fidelidad de audio impecable.",
-    "filename": "sample_es_5_base.wav",
-    "gen_time": 4.7799973487854,
-    "audio_duration": 6.08,
-    "rtf": 0.786183774471283,
-    "vram_mb": 10639.0
-  },
-  {
-    "lang": "es",
-    "id": 5,
-    "mode": "enhanced",
-    "text": "Experimente el futuro de la generaci\u00f3n de voz, donde la velocidad se une a una fidelidad de audio impecable.",
-    "filename": "sample_es_5_enhanced.wav",
-    "gen_time": 5.274805068969727,
-    "audio_duration": 6.496,
-    "rtf": 0.8120081694842559,
-    "vram_mb": 10639.0
-  }
+    {
+        "language": "en",
+        "id": 1,
+        "text": "Auralis Enhanced provides high-fidelity speech synthesis with ultra-low latency.",
+        "base": {
+            "file": "sample_en_1_base.wav",
+            "rtf": 1.453550069357246,
+            "duration": 4.96
+        },
+        "enhanced": {
+            "file": "sample_en_1_enhanced.wav",
+            "rtf": 1.6707688010542436,
+            "duration": 4.544
+        }
+    },
+    {
+        "language": "en",
+        "id": 2,
+        "text": "The integration of FlashSR allows for real-time upscaling from 24 kilohertz to 48 kilohertz.",
+        "base": {
+            "file": "sample_en_2_base.wav",
+            "rtf": 0.8950487822308353,
+            "duration": 7.1466666666666665
+        },
+        "enhanced": {
+            "file": "sample_en_2_enhanced.wav",
+            "rtf": 2.023162342939221,
+            "duration": 6.261375
+        }
+    },
+    {
+        "language": "en",
+        "id": 3,
+        "text": "Experience the power of advanced neural text-to-speech technology today.",
+        "base": {
+            "file": "sample_en_3_base.wav",
+            "rtf": 1.6688116835240858,
+            "duration": 4.032
+        },
+        "enhanced": {
+            "file": "sample_en_3_enhanced.wav",
+            "rtf": 1.1093619709434177,
+            "duration": 4.544
+        }
+    },
+    {
+        "language": "en",
+        "id": 4,
+        "text": "Our system is optimized for performance, ensuring smooth and natural-sounding audio.",
+        "base": {
+            "file": "sample_en_4_base.wav",
+            "rtf": 1.2697525914615708,
+            "duration": 4.682666666666667
+        },
+        "enhanced": {
+            "file": "sample_en_4_enhanced.wav",
+            "rtf": 1.318075904745111,
+            "duration": 4.64
+        }
+    },
+    {
+        "language": "en",
+        "id": 5,
+        "text": "This is a demonstration of the robust audio saturation guards in the latest update.",
+        "base": {
+            "file": "sample_en_5_base.wav",
+            "rtf": 1.0355191573457765,
+            "duration": 3.9466666666666668
+        },
+        "enhanced": {
+            "file": "sample_en_5_enhanced.wav",
+            "rtf": 1.0521420398246437,
+            "duration": 4.544
+        }
+    },
+    {
+        "language": "es",
+        "id": 1,
+        "text": "Auralis Enhanced proporciona s\u00edntesis de voz de alta fidelidad con una latencia ultra baja.",
+        "base": {
+            "file": "sample_es_1_base.wav",
+            "rtf": 1.1431471016486037,
+            "duration": 8.352
+        },
+        "enhanced": {
+            "file": "sample_es_1_enhanced.wav",
+            "rtf": 0.983376729711974,
+            "duration": 7.0506875
+        }
+    },
+    {
+        "language": "es",
+        "id": 2,
+        "text": "La integraci\u00f3n de FlashSR permite el escalado en tiempo real de 24 kilohercios a 48 kilohercios.",
+        "base": {
+            "file": "sample_es_2_base.wav",
+            "rtf": 0.9820528779425813,
+            "duration": 8.725333333333333
+        },
+        "enhanced": {
+            "file": "sample_es_2_enhanced.wav",
+            "rtf": 0.9575494943442618,
+            "duration": 7.701375
+        }
+    },
+    {
+        "language": "es",
+        "id": 3,
+        "text": "Experimente el poder de la tecnolog\u00eda avanzada de texto a voz neuronal hoy mismo.",
+        "base": {
+            "file": "sample_es_3_base.wav",
+            "rtf": 1.0892541992512945,
+            "duration": 9.418666666666667
+        },
+        "enhanced": {
+            "file": "sample_es_3_enhanced.wav",
+            "rtf": 1.3366392979362909,
+            "duration": 6.592
+        }
+    },
+    {
+        "language": "es",
+        "id": 4,
+        "text": "Nuestro sistema est\u00e1 optimizado para el rendimiento, garantizando un audio fluido y natural.",
+        "base": {
+            "file": "sample_es_4_base.wav",
+            "rtf": 0.8834346816747598,
+            "duration": 5.152
+        },
+        "enhanced": {
+            "file": "sample_es_4_enhanced.wav",
+            "rtf": 1.1163504583859265,
+            "duration": 6.176
+        }
+    },
+    {
+        "language": "es",
+        "id": 5,
+        "text": "Esta es una demostraci\u00f3n de las protecciones contra la saturaci\u00f3n de audio en la \u00faltima actualizaci\u00f3n.",
+        "base": {
+            "file": "sample_es_5_base.wav",
+            "rtf": 1.0123097355047597,
+            "duration": 5.749333333333333
+        },
+        "enhanced": {
+            "file": "sample_es_5_enhanced.wav",
+            "rtf": 1.2051392975614443,
+            "duration": 7.285375
+        }
+    }
 ]
