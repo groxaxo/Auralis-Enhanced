@@ -13,6 +13,31 @@ import torchaudio
 from torchaudio.io import CodecConfig
 
 
+def to_float32_audio(x: np.ndarray) -> np.ndarray:
+    """
+    Convert common PCM dtypes to float32 in [-1, 1].
+    Leaves float input as float32.
+    """
+    if x.dtype == np.int16:
+        x = x.astype(np.float32) / 32768.0
+    elif x.dtype == np.int32:
+        x = x.astype(np.float32) / 2147483648.0
+    elif x.dtype == np.uint8:
+        # unsigned 8-bit PCM is often [0..255] with 128 as "zero"
+        x = (x.astype(np.float32) - 128.0) / 128.0
+    elif x.dtype != np.float32:
+        x = x.astype(np.float32)
+    return x
+
+
+def peak_attenuate_only(x: np.ndarray, target_peak: float = 0.8, eps: float = 1e-12):
+    peak = float(np.max(np.abs(x))) if x.size else 0.0
+    if peak > target_peak + eps:
+        gain = target_peak / peak
+        return x * gain, peak, gain
+    return x, peak, 1.0
+
+
 @dataclass
 class TTSOutput:
     """Container for TTS inference output with integrated audio utilities
@@ -287,14 +312,24 @@ class TTSOutput:
             # Downsample to 16kHz for FlashSR input
             audio_16k = self.resample(16000)
 
+            # 1) Input Sanity
+            input_array = to_float32_audio(audio_16k.array)
+
+            # 2) Pre-FlashSR Guard (Headroom)
+            # Attenuate input to 0.8 peak if hot, preventing internal model saturation
+            input_array, in_peak, in_gain = peak_attenuate_only(
+                input_array, target_peak=0.8
+            )
+
             # Apply FlashSR super-resolution
             processor = get_flashsr_processor(device=device)
-            enhanced_array, enhanced_sr = processor.process(audio_16k.array, sr=16000)
+            enhanced_array, enhanced_sr = processor.process(input_array, sr=16000)
 
-            # Normalize to prevent saturation (cap at 0.95)
-            max_val = np.abs(enhanced_array).max()
-            if max_val > 0.95:
-                enhanced_array = enhanced_array * (0.95 / max_val)
+            # 3) Post-FlashSR Safety Cap
+            # Final attenuation to 0.95 peak to prevent clipping
+            enhanced_array, out_peak, out_gain = peak_attenuate_only(
+                enhanced_array, target_peak=0.95
+            )
 
             # Create new output with enhanced audio
             enhanced_output = TTSOutput(
