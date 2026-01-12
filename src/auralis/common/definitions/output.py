@@ -291,6 +291,11 @@ class TTSOutput:
             processor = get_flashsr_processor(device=device)
             enhanced_array, enhanced_sr = processor.process(audio_16k.array, sr=16000)
 
+            # Normalize to prevent saturation (cap at 0.95)
+            max_val = np.abs(enhanced_array).max()
+            if max_val > 0.95:
+                enhanced_array = enhanced_array * (0.95 / max_val)
+
             # Create new output with enhanced audio
             enhanced_output = TTSOutput(
                 array=enhanced_array,
