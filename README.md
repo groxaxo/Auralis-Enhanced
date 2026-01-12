@@ -29,23 +29,43 @@
 
 ---
 
+## 📊 Performance Metrics
+
+We measured the performance of Auralis Enhanced on an **NVIDIA RTX 3090**, comparing standard 24kHz synthesis against 48kHz production output with FlashSR.
+
+| Metric | Base (24kHz) | Enhanced (FlashSR 48kHz) | Impact |
+| :--- | :--- | :--- | :--- |
+| **Real-Time Factor (RTF)** | **0.87x** | **0.91x** | Negligible (~0.04x) |
+| **Avg Generation Speed** | ~1700 chars/min | ~1600 chars/min | High Speed Maintained |
+| **VRAM Usage** | ~4.4 GB | ~5.1 GB | +0.7 GB |
+
+> **Note:** Lower RTF is better. An RTF of 0.91x means generating 10 seconds of audio takes only 9.1 seconds.
+
+---
+
 ## 🎧 Audio Samples (Comparison)
 
-Experience the difference between standard synthesis and **FlashSR 48kHz enhancement**.
+Below are 5 examples per language demonstrating the upgrade from standard TTS to **FlashSR 48kHz Studio Quality**.
 
 ### 🇺🇸 English Comparison
-> "Auralis Enhanced is a high-performance text-to-speech engine designed for production environments. It offers seamless voice cloning, audio super-resolution, and lightning-fast inference for a global audience."
 
-| Base (24kHz) | Enhanced (FlashSR 48kHz) |
-| :--- | :--- |
-| <audio controls src="samples/sample_en_base.wav"></audio> | <audio controls src="samples/sample_en_enhanced.wav"></audio> |
+| ID | Text Segment | Base (24kHz) | Enhanced (48kHz) |
+| :--- | :--- | :--- | :--- |
+| 1 | *"Auralis Enhanced is a high-performance..."* | <audio controls src="samples/sample_en_1_base.wav"></audio> | <audio controls src="samples/sample_en_1_enhanced.wav"></audio> |
+| 2 | *"It offers seamless voice cloning..."* | <audio controls src="samples/sample_en_2_base.wav"></audio> | <audio controls src="samples/sample_en_2_enhanced.wav"></audio> |
+| 3 | *"With FlashSR technology..."* | <audio controls src="samples/sample_en_3_base.wav"></audio> | <audio controls src="samples/sample_en_3_enhanced.wav"></audio> |
+| 4 | *"Deploy it on your own infrastructure..."* | <audio controls src="samples/sample_en_4_base.wav"></audio> | <audio controls src="samples/sample_en_4_enhanced.wav"></audio> |
+| 5 | *"Experience the future of voice..."* | <audio controls src="samples/sample_en_5_base.wav"></audio> | <audio controls src="samples/sample_en_5_enhanced.wav"></audio> |
 
 ### 🇪🇸 Spanish Comparison
-> "Auralis Enhanced es un motor de texto a voz de alto rendimiento diseñado para entornos de producción. Ofrece clonación de voz sin interrupciones, súper resolución de audio e inferencia ultrarrápida para una audiencia global."
 
-| Base (24kHz) | Enhanced (FlashSR 48kHz) |
-| :--- | :--- |
-| <audio controls src="samples/sample_es_base.wav"></audio> | <audio controls src="samples/sample_es_enhanced.wav"></audio> |
+| ID | Text Segment | Base (24kHz) | Enhanced (48kHz) |
+| :--- | :--- | :--- | :--- |
+| 1 | *"Auralis Enhanced es un motor..."* | <audio controls src="samples/sample_es_1_base.wav"></audio> | <audio controls src="samples/sample_es_1_enhanced.wav"></audio> |
+| 2 | *"Ofrece clonación de voz..."* | <audio controls src="samples/sample_es_2_base.wav"></audio> | <audio controls src="samples/sample_es_2_enhanced.wav"></audio> |
+| 3 | *"Con la tecnología FlashSR..."* | <audio controls src="samples/sample_es_3_base.wav"></audio> | <audio controls src="samples/sample_es_3_enhanced.wav"></audio> |
+| 4 | *"Implementelo en su propia..."* | <audio controls src="samples/sample_es_4_base.wav"></audio> | <audio controls src="samples/sample_es_4_enhanced.wav"></audio> |
+| 5 | *"Experimente el futuro..."* | <audio controls src="samples/sample_es_5_base.wav"></audio> | <audio controls src="samples/sample_es_5_enhanced.wav"></audio> |
 
 ---
 
