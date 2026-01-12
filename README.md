@@ -29,68 +29,44 @@
 
 ---
 
-## 📊 Performance Metrics
+## 📊 Performance & Benchmarks
 
-We measured the performance of Auralis Enhanced on an **NVIDIA RTX 3090**, comparing standard 24kHz synthesis against 48kHz production output with FlashSR.
+Measured on an **NVIDIA RTX 3090**, comparing standard 24kHz synthesis against 48kHz production output with FlashSR.
 
 | Metric | Base (24kHz) | Enhanced (FlashSR 48kHz) | Impact |
 | :--- | :--- | :--- | :--- |
-| **Peak Real-Time Factor (RTF)** | **0.19x** | **0.26x** | Negligible (~0.07x) |
+| **Peak RTF (Real-Time Factor)** | **0.19x** | **0.26x** | Negligible (+0.07x) |
 | **Max Generation Speed** | ~8000 chars/min | ~6500 chars/min | Ultra-Fast Processing |
-| **VRAM Usage** | ~4.4 GB | ~5.1 GB | +0.7 GB |
+| **VRAM Usage** | ~4.4 GB | ~5.1 GB | +0.7 GB Overhead |
+| **System RAM** | ~9.2 GB | ~9.6 GB | Low Memory Footprint |
 
-> **Note:** Lower RTF is better. An RTF of 0.91x means generating 10 seconds of audio takes only 9.1 seconds.
+> [!TIP]
+> **RTF < 1.0** means audio is generated faster than it is spoken. At **0.19x**, generating 1 minute of speech takes only **11.4 seconds**.
 
 ---
 
-## 🎧 Audio Samples (Comparison)
+## 🎧 Audio Showcase
 
-Below are 5 examples per language demonstrating the upgrade from standard TTS to **FlashSR 48kHz Studio Quality**.
+Experience the difference between standard synthesis and professional **48kHz Audio Enrichment**.
 
 ### 🇺🇸 English Comparison
-
-| ID | Text Segment | Base (24kHz) | Enhanced (48kHz) |
-| :--- | :--- | :--- | :--- |
-| 1 | *"Auralis Enhanced is a high-performance..."* | [🔊 Play](samples/sample_en_1_base.wav?raw=true) | [🔊 Play](samples/sample_en_1_enhanced.wav?raw=true) |
-| 2 | *"It offers seamless voice cloning..."* | [🔊 Play](samples/sample_en_2_base.wav?raw=true) | [🔊 Play](samples/sample_en_2_enhanced.wav?raw=true) |
-| 3 | *"With FlashSR technology..."* | [🔊 Play](samples/sample_en_3_base.wav?raw=true) | [🔊 Play](samples/sample_en_3_enhanced.wav?raw=true) |
-| 4 | *"Deploy it on your own infrastructure..."* | [🔊 Play](samples/sample_en_4_base.wav?raw=true) | [🔊 Play](samples/sample_en_4_enhanced.wav?raw=true) |
-| 5 | *"Experience the future of voice..."* | [🔊 Play](samples/sample_en_5_base.wav?raw=true) | [🔊 Play](samples/sample_en_5_enhanced.wav?raw=true) |
+| ID | Text Segment | Standard (24kHz) | FlashSR Enhanced (48kHz) |
+| :-- | :--- | :--- | :--- |
+| 1 | *Auralis Enhanced: High-performance TTS engine for production...* | <audio controls src="samples/sample_en_1_base.wav"></audio> | <audio controls src="samples/sample_en_1_enhanced.wav"></audio> |
+| 2 | *Seamless voice cloning and audio super-resolution...* | <audio controls src="samples/sample_en_2_base.wav"></audio> | <audio controls src="samples/sample_en_2_enhanced.wav"></audio> |
+| 3 | *Professional 48kHz quality with FlashSR technology...* | <audio controls src="samples/sample_en_3_base.wav"></audio> | <audio controls src="samples/sample_en_3_enhanced.wav"></audio> |
+| 4 | *Full data privacy with local infrastructure deployment...* | <audio controls src="samples/sample_en_4_base.wav"></audio> | <audio controls src="samples/sample_en_4_enhanced.wav"></audio> |
+| 5 | *Where speed meets impeccable audio fidelity...* | <audio controls src="samples/sample_en_5_base.wav"></audio> | <audio controls src="samples/sample_en_5_enhanced.wav"></audio> |
 
 ### 🇪🇸 Spanish Comparison
-
-| ID | Text Segment | Base (24kHz) | Enhanced (48kHz) |
-| :--- | :--- | :--- | :--- |
-| 1 | *"Auralis Enhanced es un motor..."* | [🔊 Play](samples/sample_es_1_base.wav?raw=true) | [🔊 Play](samples/sample_es_1_enhanced.wav?raw=true) |
-| 2 | *"Ofrece clonación de voz..."* | [🔊 Play](samples/sample_es_2_base.wav?raw=true) | [🔊 Play](samples/sample_es_2_enhanced.wav?raw=true) |
-| 3 | *"Con la tecnología FlashSR..."* | [🔊 Play](samples/sample_es_3_base.wav?raw=true) | [🔊 Play](samples/sample_es_3_enhanced.wav?raw=true) |
-| 4 | *"Implementelo en su propia..."* | [🔊 Play](samples/sample_es_4_base.wav?raw=true) | [🔊 Play](samples/sample_es_4_enhanced.wav?raw=true) |
-| 5 | *"Experimente el futuro..."* | [🔊 Play](samples/sample_es_5_base.wav?raw=true) | [🔊 Play](samples/sample_es_5_enhanced.wav?raw=true) |
-
+| ID | Segmento de Texto | Base (24kHz) | FlashSR Aumentado (48kHz) |
+| :-- | :--- | :--- | :--- |
+| 1 | *Auralis Enhanced: Motor de texto a voz de alto rendimiento...* | <audio controls src="samples/sample_es_1_base.wav"></audio> | <audio controls src="samples/sample_es_1_enhanced.wav"></audio> |
+| 2 | *Clonación de voz e inferencia ultrarrápida sin interrupciones...* | <audio controls src="samples/sample_es_2_base.wav"></audio> | <audio controls src="samples/sample_es_2_enhanced.wav"></audio> |
+| 3 | *Síntesis escalada instantáneamente a calidad profesional...* | <audio controls src="samples/sample_es_3_base.wav"></audio> | <audio controls src="samples/sample_es_3_enhanced.wav"></audio> |
+| 4 | *Privacidad de datos y escalabilidad ilimitada en su infraestructura...* | <audio controls src="samples/sample_es_4_base.wav"></audio> | <audio controls src="samples/sample_es_4_enhanced.wav"></audio> |
+| 5 | *Fidelidad de audio impecable donde la velocidad es clave...* | <audio controls src="samples/sample_es_5_base.wav"></audio> | <audio controls src="samples/sample_es_5_enhanced.wav"></audio> |
 ---
-
-## 📊 Performance & Benchmarks
-
-Measured on an **NVIDIA RTX 3090** (Single Stream Inference with FlashSR 48kHz).
-
-### Generation Speed (RTF)
-| Language | Audio Duration | Generation Time | Real-Time Factor (RTF) |
-| :--- | :--- | :--- | :--- |
-| **English** 🇺🇸 | 12.06s | 13.53s | **1.12x** |
-| **Spanish** 🇪🇸 | 17.68s | 11.99s | **0.68x** |
-
-> [!NOTE]
-> RTF (Real-Time Factor) < 1.0 means the system generates audio faster than it is spoken. For book-scale processing with batching, RTF can reach as low as **0.02x**.
-
-### Resource Usage
-| Component | Usage (Base) | Usage (Peak) |
-| :--- | :--- | :--- |
-| **VRAM (GPU)** | ~4.1 GB | **4.6 GB** |
-| **RAM (System)** | ~9.2 GB | **9.6 GB** |
-| **CPU** | Moderate | Peak during FlashSR |
-
----
-
 ## Quick Start ⭐
 
 ### 1. Installation

@@ -1,7 +1,9 @@
 import argparse
+import asyncio
 import base64
 import json
 import logging
+import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -15,8 +17,18 @@ from starlette.responses import StreamingResponse
 from auralis.core.tts import TTS
 from auralis.common.definitions.openai import VoiceChatCompletionRequest, AudioSpeechGenerationRequest
 
-# Global TTS engine instance
+# Global state for lazy initialization with inactivity timeout
 tts_engine: Optional[TTS] = None
+last_activity_time: float = 0.0
+cleanup_task: Optional[asyncio.Task] = None
+init_lock: asyncio.Lock = asyncio.Lock()
+shutdown_lock: asyncio.Lock = asyncio.Lock()
+initializing: bool = False
+shutting_down: bool = False
+
+# Configuration defaults
+INACTIVITY_TIMEOUT = 300  # 5 minutes in seconds
+CLEANUP_CHECK_INTERVAL = 30  # Check every 30 seconds
 
 # Mapping of logging level strings to their corresponding logging constants
 logger_str_to_logging = {
@@ -25,46 +37,182 @@ logger_str_to_logging = {
     "err": logging.ERROR
 }
 
+async def ensure_tts_engine(args=None) -> TTS:
+    """Ensure TTS engine is initialized (lazy loading with thread safety).
+    
+    Args:
+        args: Optional argparse.Namespace with model configuration
+        
+    Returns:
+        Initialized TTS engine
+        
+    Raises:
+        RuntimeError: If initialization fails
+    """
+    global tts_engine, last_activity_time, initializing
+    
+    # Fast path: engine already exists
+    if tts_engine is not None:
+        return tts_engine
+    
+    # Acquire lock for initialization
+    async with init_lock:
+        # Double-check after acquiring lock
+        if tts_engine is not None:
+            return tts_engine
+        
+        if initializing:
+            # Wait for another task to complete initialization
+            while initializing:
+                await asyncio.sleep(0.01)
+            return tts_engine
+        
+        initializing = True
+        try:
+            # Use provided args or defaults
+            if args is None:
+                args = argparse.Namespace(
+                    model='AstraMindAI/xttsv2',
+                    gpt_model='AstraMindAI/xtts2-gpt',
+                    max_concurrency=8,
+                    vllm_logging_level='warn'
+                )
+            
+            logging_level = logger_str_to_logging.get(args.vllm_logging_level, logging.WARNING)
+            
+            # Initialize TTS engine in a thread to avoid event loop conflict
+            logging.info("Initializing TTS engine (lazy loading in thread)...")
+            
+            def create_tts_engine():
+                """Synchronous TTS engine creation."""
+                return (TTS(
+                    scheduler_max_concurrency=args.max_concurrency,
+                    vllm_logging_level=logging_level)
+                .from_pretrained(
+                    args.model, gpt_model=args.gpt_model
+                ))
+            
+            # Run synchronous initialization in thread pool
+            tts_engine = await asyncio.to_thread(create_tts_engine)
+            
+            # Update activity time
+            last_activity_time = time.time()
+            logging.info(f"TTS engine initialized successfully at {last_activity_time}")
+            
+            return tts_engine
+        finally:
+            initializing = False
+
+async def shutdown_tts_engine():
+    """Shutdown TTS engine and release resources."""
+    global tts_engine, last_activity_time, shutting_down
+    
+    async with shutdown_lock:
+        if tts_engine is None or shutting_down:
+            return
+        
+        shutting_down = True
+        try:
+            logging.info("Shutting down TTS engine due to inactivity...")
+            await tts_engine.shutdown()
+            tts_engine = None
+            last_activity_time = 0.0
+            logging.info("TTS engine shut down successfully, VRAM released")
+        except Exception as e:
+            logging.error(f"Error during TTS engine shutdown: {e}")
+            # Even if shutdown fails, clear the reference to allow reinitialization
+            tts_engine = None
+        finally:
+            shutting_down = False
+
+async def cleanup_inactive_engine():
+    """Check for inactivity and shutdown TTS engine if timeout exceeded."""
+    global tts_engine, last_activity_time
+    
+    if tts_engine is None or last_activity_time == 0:
+        return
+    
+    current_time = time.time()
+    time_since_activity = current_time - last_activity_time
+    
+    if time_since_activity > INACTIVITY_TIMEOUT:
+        logging.info(f"TTS engine inactive for {time_since_activity:.1f}s (> {INACTIVITY_TIMEOUT}s), triggering shutdown")
+        await shutdown_tts_engine()
+
+async def cleanup_worker():
+    """Background task that periodically checks for inactivity."""
+    while True:
+        try:
+            await cleanup_inactive_engine()
+        except Exception as e:
+            logging.error(f"Error in cleanup worker: {e}")
+        
+        await asyncio.sleep(CLEANUP_CHECK_INTERVAL)
+
 @asynccontextmanager
 async def lifecycle_manager(app: FastAPI):
-    global tts_engine
-    if tts_engine is None:
-        # Use default arguments for startup
-        args = argparse.Namespace(
-            model='AstraMindAI/xttsv2',
-            gpt_model='AstraMindAI/xtts2-gpt',
-            max_concurrency=8,
-            vllm_logging_level='warn'
-        )
-        logging_level = logger_str_to_logging.get(args.vllm_logging_level)
-        start_tts_engine(args, logging_level)
-    yield # here the app run
-    await tts_engine.shutdown()
+    """FastAPI lifespan manager for startup/shutdown.
+    
+    Starts cleanup task on startup, shuts down TTS engine on shutdown.
+    """
+    global cleanup_task
+    
+    # Start cleanup task
+    cleanup_task = asyncio.create_task(cleanup_worker())
+    logging.info(f"Started inactivity cleanup task (timeout={INACTIVITY_TIMEOUT}s, check_interval={CLEANUP_CHECK_INTERVAL}s)")
+    
+    yield  # App runs here
+    
+    # Shutdown cleanup task
+    if cleanup_task:
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
+        cleanup_task = None
+    
+    # Shutdown TTS engine if exists
+    await shutdown_tts_engine()
 
 # Initialize FastAPI application
 app = FastAPI(lifespan=lifecycle_manager)
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint with detailed status."""
+    global tts_engine, last_activity_time
+    
     try:
-        global tts_engine
+        current_time = time.time()
+        time_since_activity = current_time - last_activity_time if last_activity_time > 0 else 0
+        time_until_shutdown = max(0, INACTIVITY_TIMEOUT - time_since_activity) if tts_engine else 0
+        
         return {
-            "status": "healthy" if tts_engine is not None else "initializing",
-            "tts_engine_initialized": tts_engine is not None,
-            "tts_engine_type": str(type(tts_engine)),
-            "tts_engine_value": str(tts_engine)[:100] if tts_engine else "None"
+            "status": "healthy",
+            "tts_engine": {
+                "initialized": tts_engine is not None,
+                "status": "active" if tts_engine else "inactive",
+                "time_since_last_activity": f"{time_since_activity:.1f}s",
+                "time_until_shutdown": f"{time_until_shutdown:.1f}s" if tts_engine else "N/A",
+                "initializing": initializing,
+                "shutting_down": shutting_down
+            },
+            "server": {
+                "inactivity_timeout": f"{INACTIVITY_TIMEOUT}s",
+                "cleanup_check_interval": f"{CLEANUP_CHECK_INTERVAL}s"
+            }
         }
     except NameError as e:
         return {
             "status": "error",
             "error": f"NameError: {e}",
-            "message": "tts_engine variable not found in scope"
+            "message": "Global variables not found in scope"
         }
 
 def start_tts_engine(args, logging_level):
     """Initialize the Text-to-Speech engine with specified parameters
-
+    
     Args:
         args: Parsed command line arguments containing model configurations
         logging_level: Logging level for the TTS engine
@@ -77,35 +225,43 @@ def start_tts_engine(args, logging_level):
         args.model, gpt_model=args.gpt_model
     ))
 
-
-
-
 @app.post("/v1/audio/speech")
 async def generate_audio(request: AudioSpeechGenerationRequest):
     """Generate audio from text using the TTS engine
-
+    
     Args:
         request: Audio speech generation request containing text and parameters
-
+        
     Returns:
         Response containing generated audio in requested format
-
+        
     Raises:
         HTTPException: If TTS engine is not initialized or generation fails
     """
-    global tts_engine
-    print(f"DEBUG: tts_engine = {tts_engine}, type = {type(tts_engine)}")
-    if tts_engine is None:
-        raise HTTPException(status_code=500, detail="TTS engine not initialized")
-
+    global last_activity_time
+    
     try:
+        # Lazy initialize TTS engine if needed
+        args = argparse.Namespace(
+            model='AstraMindAI/xttsv2',
+            gpt_model='AstraMindAI/xtts2-gpt',
+            max_concurrency=8,
+            vllm_logging_level='warn'
+        )
+        tts = await ensure_tts_engine(args)
+        
+        # Update activity time
+        last_activity_time = time.time()
+        
+        print(f"DEBUG: tts_engine = {tts}, type = {type(tts)}")
         print("DEBUG: Creating TTS request...")
+        
         # Create TTSRequest with default params and auralis overrides
         tts_request = request.to_tts_request()
         print("DEBUG: TTS request created successfully")
 
         # Generate speech and adjust speed
-        output = await tts_engine.generate_speech_async(tts_request)
+        output = await tts.generate_speech_async(tts_request)
         if request.speed != 1.0:
             output.change_speed(request.speed)
         audio_bytes = output.to_bytes(request.response_format)
@@ -122,20 +278,30 @@ async def generate_audio(request: AudioSpeechGenerationRequest):
 @app.post("/v1/chat/completions")
 async def chat_completions(request: VoiceChatCompletionRequest, authorization: Optional[str] = Header(None)):
     """Handle chat completions with optional audio generation
-
+    
     Args:
         request: Voice chat completion request containing prompt and parameters
         authorization: Bearer token for API authentication
-
+        
     Returns:
         StreamingResponse containing text and/or audio chunks
-
+        
     Raises:
         HTTPException: If TTS engine is not initialized or request fails
     """
-    global tts_engine
-    if tts_engine is None:
-        raise HTTPException(status_code=500, detail="TTS engine not initialized")
+    global last_activity_time
+    
+    # Lazy initialize TTS engine if needed
+    args = argparse.Namespace(
+        model='AstraMindAI/xttsv2',
+        gpt_model='AstraMindAI/xtts2-gpt',
+        max_concurrency=8,
+        vllm_logging_level='warn'
+    )
+    tts = await ensure_tts_engine(args)
+    
+    # Update activity time
+    last_activity_time = time.time()
 
     # Validate authorization header
     if not authorization or not authorization.startswith("Bearer "):
@@ -172,7 +338,7 @@ async def chat_completions(request: VoiceChatCompletionRequest, authorization: O
 
         async def stream_generator():
             """Generator function for streaming text and audio responses
-
+            
             Yields:
                 JSON-formatted strings containing text chunks and/or audio data
             """
@@ -214,7 +380,7 @@ async def chat_completions(request: VoiceChatCompletionRequest, authorization: O
                                         if 'audio' in modalities:
                                             tts_request.text = accumulated_content
                                             tts_request.infer_language()
-                                            audio_output = await tts_engine.generate_speech_async(tts_request)
+                                            audio_output = await tts.generate_speech_async(tts_request)
                                             audio_base64 = base64.b64encode(audio_output.to_bytes()).decode("utf-8")
                                             yield f"data: {json.dumps({'id': request_id, 'object': 'audio.chunk', 'data': audio_base64})}\n\n"
 
@@ -230,7 +396,7 @@ async def chat_completions(request: VoiceChatCompletionRequest, authorization: O
                 if accumulated_content and 'audio' in modalities:
                     tts_request.text = accumulated_content
                     tts_request.infer_language()
-                    audio_output = await tts_engine.generate_speech_async(tts_request)
+                    audio_output = await tts.generate_speech_async(tts_request)
                     audio_base64 = base64.b64encode(audio_output.to_bytes()).decode("utf-8")
                     yield f"data: {json.dumps({'id': request_id, 'object': 'audio.chunk', 'data': audio_base64})}\n\n"
 
@@ -252,24 +418,30 @@ async def chat_completions(request: VoiceChatCompletionRequest, authorization: O
 def main():
     """Main function to configure and start the FastAPI server"""
     # Set up command line argument parser
-    parser = argparse.ArgumentParser(description="Auralis TTS FastAPI Server")
+    parser = argparse.ArgumentParser(description="Auralis TTS FastAPI Server with inactivity timeout")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to run the server on")
-    parser.add_argument("--port", type=int, default=8000, help="Port to run the server on")
+    parser.add_argument("--port", type=int, default=9950, help="Port to run the server on (default: 9950)")
     parser.add_argument("--model", type=str, default='AstraMindAI/xttsv2', help="The base model to run")
     parser.add_argument("--gpt_model", type=str, default='AstraMindAI/xtts2-gpt', help="The gpt model to load alongside the base model, if present")
     parser.add_argument("--max_concurrency", type=int, default=8, help="The concurrency value that is used in the TTS Engine, it is directly connected to the memory consumption")
     parser.add_argument("--vllm_logging_level", type=str, default='warn', help="The vllm logging level, could be one of [info | warn | err]")
-
+    parser.add_argument("--inactivity_timeout", type=int, default=300, help="Seconds of inactivity before TTS engine shuts down (default: 300 = 5 minutes)")
+    parser.add_argument("--cleanup_interval", type=int, default=30, help="Seconds between inactivity checks (default: 30)")
+    
     args = parser.parse_args()
-
-    # Initialize the TTS engine
-    logging_level = logger_str_to_logging.get(args.vllm_logging_level, None)
-    if not logging_level:
-        raise ValueError("The logging level for vllm was not correct, please choose between ['info' | 'warn' | 'err']")
-
-    start_tts_engine(args, logging_level)
-
-    # Start the FastAPI server
+    
+    # Update global configuration
+    global INACTIVITY_TIMEOUT, CLEANUP_CHECK_INTERVAL
+    INACTIVITY_TIMEOUT = args.inactivity_timeout
+    CLEANUP_CHECK_INTERVAL = args.cleanup_interval
+    
+    # Log configuration
+    logging.basicConfig(level=logging.INFO)
+    logging.info(f"Starting Auralis TTS server on port {args.port}")
+    logging.info(f"Inactivity timeout: {INACTIVITY_TIMEOUT}s, Cleanup interval: {CLEANUP_CHECK_INTERVAL}s")
+    logging.info("TTS engine will load on first request and auto-shutdown after inactivity")
+    
+    # Start the FastAPI server (TTS engine loads lazily on first request)
     uvicorn.run(
         app,
         host=args.host,
