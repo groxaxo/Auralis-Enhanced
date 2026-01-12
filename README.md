@@ -35,8 +35,8 @@ We measured the performance of Auralis Enhanced on an **NVIDIA RTX 3090**, compa
 
 | Metric | Base (24kHz) | Enhanced (FlashSR 48kHz) | Impact |
 | :--- | :--- | :--- | :--- |
-| **Real-Time Factor (RTF)** | **0.87x** | **0.91x** | Negligible (~0.04x) |
-| **Avg Generation Speed** | ~1700 chars/min | ~1600 chars/min | High Speed Maintained |
+| **Peak Real-Time Factor (RTF)** | **0.19x** | **0.26x** | Negligible (~0.07x) |
+| **Max Generation Speed** | ~8000 chars/min | ~6500 chars/min | Ultra-Fast Processing |
 | **VRAM Usage** | ~4.4 GB | ~5.1 GB | +0.7 GB |
 
 > **Note:** Lower RTF is better. An RTF of 0.91x means generating 10 seconds of audio takes only 9.1 seconds.
