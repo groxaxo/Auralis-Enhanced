@@ -2,6 +2,7 @@ import uuid
 from typing import Any, Dict, AsyncGenerator, Callable, Awaitable, Optional
 import asyncio
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 from auralis.common.definitions.scheduler import QueuedRequest, TaskState
 from auralis.common.logging.logger import setup_logger
@@ -127,6 +128,7 @@ class TwoPhaseScheduler:
         Args:
             request (QueuedRequest): Request to process.
         """
+        request_start = time.perf_counter()
         try:
             self.logger.info(f"Starting request {request.id}")
             # Phase 1: Initial processing
@@ -144,6 +146,12 @@ class TwoPhaseScheduler:
             request.state = TaskState.FAILED
             self.logger.error(f"Request {request.id} failed: {e}")
         finally:
+            request.total_duration = time.perf_counter() - request_start
+            self.logger.info(
+                f"Request {request.id} timing | total: {request.total_duration:.3f}s | "
+                f"phase1: {request.first_phase_duration:.3f}s | "
+                f"phase2: {request.second_phase_duration:.3f}s"
+            )
             request.completion_event.set()
 
     async def _handle_first_phase(self, request: QueuedRequest):
@@ -160,13 +168,15 @@ class TwoPhaseScheduler:
         """
         request.state = TaskState.PROCESSING_FIRST
         try:
+            phase_start = time.perf_counter()
             request.first_phase_result = await asyncio.wait_for(
                 request.first_fn(request.input),
                 timeout=self.request_timeout
             )
+            request.first_phase_duration = time.perf_counter() - phase_start
             request.generators_count = len(request.first_phase_result.get('parallel_inputs', []))
             # Initialize sequence_buffers here
-            request.sequence_buffers = {i: [] for i in range(request.generators_count)}
+            request.sequence_buffers = {i: deque() for i in range(request.generators_count)}
             request.state = TaskState.PROCESSING_SECOND
         except asyncio.TimeoutError:
             raise TimeoutError(f"First phase timeout after {self.request_timeout}s")
@@ -184,6 +194,7 @@ class TwoPhaseScheduler:
             TimeoutError: If processing exceeds request_timeout.
         """
         parallel_inputs = request.first_phase_result.get('parallel_inputs', [])
+        phase_start = time.perf_counter()
         generator_tasks = [
             asyncio.create_task(self._process_generator(request, gen_input, idx))
             for idx, gen_input in enumerate(parallel_inputs)
@@ -194,6 +205,7 @@ class TwoPhaseScheduler:
                 asyncio.gather(*generator_tasks, return_exceptions=True),
                 timeout=self.request_timeout
             )
+            request.second_phase_duration = time.perf_counter() - phase_start
         except asyncio.TimeoutError:
             for task in generator_tasks:
                 if not task.done():
@@ -267,9 +279,7 @@ class TwoPhaseScheduler:
                     timeout=self.generator_timeout
                 )
 
-                event = asyncio.Event()
-                event.set()
-                buffer.append((item, event))
+                buffer.append(item)
             except StopAsyncIteration:
                 self.logger.debug(f"Generator {sequence_idx} completed for request {request.id}")
                 break
@@ -334,11 +344,12 @@ class TwoPhaseScheduler:
             if current_index in request.sequence_buffers:
                 buffer = request.sequence_buffers[current_index]
                 if buffer:
-                    item, event = buffer[0]
+                    item = buffer[0]
                     try:
-                        await asyncio.wait_for(event.wait(), timeout=self.generator_timeout)
-                        yield item
-                        buffer.pop(0)
+                        try:
+                            yield item
+                        finally:
+                            buffer.popleft()
                         last_progress = time.time()
                     except asyncio.TimeoutError:
                         raise TimeoutError(f"Timeout waiting for item in sequence {current_index}")

@@ -1,8 +1,8 @@
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from collections import defaultdict
-from typing import Any, Dict, Optional, List, Callable, TypeVar
+from collections import defaultdict, deque
+from typing import Any, Dict, Optional, List, Callable, TypeVar, Deque
 
 import asyncio
 
@@ -29,7 +29,10 @@ class QueuedRequest:
     completed_generators: int = 0
     first_fn: Callable = None
     second_fn: Callable = None
-    sequence_buffers: Dict[int, List[Any]] = field(default_factory=lambda: defaultdict(list))
+    sequence_buffers: Dict[int, Deque[Any]] = field(default_factory=lambda: defaultdict(deque))
     next_sequence_to_yield: int = 0
     start_time: float = field(default_factory=time.time)
+    first_phase_duration: float = 0.0
+    second_phase_duration: float = 0.0
+    total_duration: float = 0.0
     completion_event: asyncio.Event = field(default_factory=asyncio.Event)
