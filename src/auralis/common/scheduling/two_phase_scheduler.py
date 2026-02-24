@@ -267,9 +267,7 @@ class TwoPhaseScheduler:
                     timeout=self.generator_timeout
                 )
 
-                event = asyncio.Event()
-                event.set()
-                buffer.append((item, event))
+                buffer.append(item)
             except StopAsyncIteration:
                 self.logger.debug(f"Generator {sequence_idx} completed for request {request.id}")
                 break
@@ -334,9 +332,8 @@ class TwoPhaseScheduler:
             if current_index in request.sequence_buffers:
                 buffer = request.sequence_buffers[current_index]
                 if buffer:
-                    item, event = buffer[0]
+                    item = buffer[0]
                     try:
-                        await asyncio.wait_for(event.wait(), timeout=self.generator_timeout)
                         yield item
                         buffer.pop(0)
                         last_progress = time.time()

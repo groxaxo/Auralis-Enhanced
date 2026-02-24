@@ -66,6 +66,7 @@ nav:
       - Logging: api/common/logging.md
   - Advanced Topics:
     - Adding Models: advanced/adding-models.md
+    - Performance Bottlenecks: advanced/performance-bottlenecks.md
     - Using OAI Server: advanced/using-oai-server.md
     - Deployment: advanced/deployment.md
     - Server Setup: deployment/server-setup.md
