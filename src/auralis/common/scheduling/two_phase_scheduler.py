@@ -2,6 +2,7 @@ import uuid
 from typing import Any, Dict, AsyncGenerator, Callable, Awaitable, Optional
 import asyncio
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 from auralis.common.definitions.scheduler import QueuedRequest, TaskState
 from auralis.common.logging.logger import setup_logger
@@ -175,7 +176,7 @@ class TwoPhaseScheduler:
             request.first_phase_duration = time.perf_counter() - phase_start
             request.generators_count = len(request.first_phase_result.get('parallel_inputs', []))
             # Initialize sequence_buffers here
-            request.sequence_buffers = {i: [] for i in range(request.generators_count)}
+            request.sequence_buffers = {i: deque() for i in range(request.generators_count)}
             request.state = TaskState.PROCESSING_SECOND
         except asyncio.TimeoutError:
             raise TimeoutError(f"First phase timeout after {self.request_timeout}s")
@@ -345,8 +346,10 @@ class TwoPhaseScheduler:
                 if buffer:
                     item = buffer[0]
                     try:
-                        yield item
-                        buffer.pop(0)
+                        try:
+                            yield item
+                        finally:
+                            buffer.popleft()
                         last_progress = time.time()
                     except asyncio.TimeoutError:
                         raise TimeoutError(f"Timeout waiting for item in sequence {current_index}")

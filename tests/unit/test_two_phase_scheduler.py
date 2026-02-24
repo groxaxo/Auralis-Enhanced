@@ -3,10 +3,12 @@ import importlib.util
 import logging
 import sys
 import types
+from collections import deque
+from pathlib import Path
 
 
 def _load_scheduler_modules():
-    root = "/home/runner/work/Auralis-Enhanced/Auralis-Enhanced/src"
+    root = Path(__file__).resolve().parents[2] / "src"
     sys.modules.setdefault("auralis", types.ModuleType("auralis"))
     sys.modules.setdefault("auralis.common", types.ModuleType("auralis.common"))
     sys.modules.setdefault("auralis.common.logging", types.ModuleType("auralis.common.logging"))
@@ -19,7 +21,7 @@ def _load_scheduler_modules():
 
     definitions_spec = importlib.util.spec_from_file_location(
         "auralis.common.definitions.scheduler",
-        f"{root}/auralis/common/definitions/scheduler.py",
+        str(root / "auralis/common/definitions/scheduler.py"),
     )
     definitions_module = importlib.util.module_from_spec(definitions_spec)
     sys.modules["auralis.common.definitions.scheduler"] = definitions_module
@@ -27,7 +29,7 @@ def _load_scheduler_modules():
 
     scheduler_spec = importlib.util.spec_from_file_location(
         "auralis.common.scheduling.two_phase_scheduler",
-        f"{root}/auralis/common/scheduling/two_phase_scheduler.py",
+        str(root / "auralis/common/scheduling/two_phase_scheduler.py"),
     )
     scheduler_module = importlib.util.module_from_spec(scheduler_spec)
     sys.modules["auralis.common.scheduling.two_phase_scheduler"] = scheduler_module
@@ -40,15 +42,18 @@ def test_run_generator_stores_raw_items_without_events():
         definitions_module, scheduler_module = _load_scheduler_modules()
         scheduler = scheduler_module.TwoPhaseScheduler()
         request = definitions_module.QueuedRequest(id="req-1", input=None, second_fn=None)
-        request.sequence_buffers = {0: []}
+        request.sequence_buffers = {0: deque()}
 
         async def _generator():
             yield "chunk-1"
             yield "chunk-2"
 
-        request.second_fn = lambda _: _generator()
+        def _second_fn(_ignored_input):
+            return _generator()
+
+        request.second_fn = _second_fn
         await scheduler._run_generator(request, None, 0)
-        assert request.sequence_buffers[0] == ["chunk-1", "chunk-2"]
+        assert list(request.sequence_buffers[0]) == ["chunk-1", "chunk-2"]
 
     asyncio.run(_run())
 
@@ -58,7 +63,7 @@ def test_yield_ordered_outputs_reads_raw_items():
         definitions_module, scheduler_module = _load_scheduler_modules()
         scheduler = scheduler_module.TwoPhaseScheduler()
         request = definitions_module.QueuedRequest(id="req-2", input=None, second_fn=None)
-        request.sequence_buffers = {0: ["a"], 1: ["b"]}
+        request.sequence_buffers = {0: deque(["a"]), 1: deque(["b"])}
         request.generators_count = 2
         request.completed_generators = 2
         request.state = definitions_module.TaskState.COMPLETED
