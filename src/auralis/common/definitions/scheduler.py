@@ -32,4 +32,7 @@ class QueuedRequest:
     sequence_buffers: Dict[int, List[Any]] = field(default_factory=lambda: defaultdict(list))
     next_sequence_to_yield: int = 0
     start_time: float = field(default_factory=time.time)
+    first_phase_duration: float = 0.0
+    second_phase_duration: float = 0.0
+    total_duration: float = 0.0
     completion_event: asyncio.Event = field(default_factory=asyncio.Event)

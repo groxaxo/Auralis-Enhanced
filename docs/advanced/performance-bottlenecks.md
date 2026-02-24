@@ -21,11 +21,16 @@ This page tracks bottlenecks observed in the current inference pipeline and opti
    - Impact: Extra Python object creation on every generated chunk.  
    - **Status:** optimized by storing chunks directly (no per-chunk `asyncio.Event` allocation/wait).
 
-5. **Speaker conditioning preparation for cloning requests**  
+5. **Insufficient per-stage visibility during request execution**  
+   - Location: `src/auralis/common/scheduling/two_phase_scheduler.py`  
+   - Impact: Harder to isolate whether slowdowns come from phase 1 or phase 2 in production traces.  
+   - **Status:** request logs now include `total`, `phase1`, and `phase2` durations for bottleneck attribution.
+
+6. **Speaker conditioning preparation for cloning requests**  
    - Location: `src/auralis/core/tts.py` (`prepare_for_streaming_generation`, `_prepare_generation_context`)  
    - Impact: Added front-loaded latency when speaker embeddings and GPT-like conditioning are both enabled.
 
-6. **Cross-phase handoff pressure (parallel input materialization)**  
+7. **Cross-phase handoff pressure (parallel input materialization)**  
    - Location: `src/auralis/core/tts.py` (`parallel_inputs` construction)  
    - Impact: Python-side orchestration overhead increases with request fan-out.
 

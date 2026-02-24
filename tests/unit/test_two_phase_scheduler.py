@@ -70,3 +70,32 @@ def test_yield_ordered_outputs_reads_raw_items():
         assert yielded == ["a", "b"]
 
     asyncio.run(_run())
+
+
+def test_process_request_tracks_phase_durations():
+    async def _run():
+        definitions_module, scheduler_module = _load_scheduler_modules()
+        scheduler = scheduler_module.TwoPhaseScheduler()
+
+        async def _first_fn(_):
+            return {"parallel_inputs": [None]}
+
+        async def _second_gen(_):
+            yield "chunk"
+
+        request = definitions_module.QueuedRequest(
+            id="req-3",
+            input=None,
+            first_fn=_first_fn,
+            second_fn=_second_gen,
+        )
+
+        await scheduler._process_request(request)
+
+        assert request.first_phase_duration >= 0
+        assert request.second_phase_duration >= 0
+        assert request.total_duration >= 0
+        assert request.total_duration >= request.first_phase_duration
+        assert request.total_duration >= request.second_phase_duration
+
+    asyncio.run(_run())

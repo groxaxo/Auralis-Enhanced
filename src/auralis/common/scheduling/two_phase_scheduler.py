@@ -127,6 +127,7 @@ class TwoPhaseScheduler:
         Args:
             request (QueuedRequest): Request to process.
         """
+        request_start = time.perf_counter()
         try:
             self.logger.info(f"Starting request {request.id}")
             # Phase 1: Initial processing
@@ -144,6 +145,12 @@ class TwoPhaseScheduler:
             request.state = TaskState.FAILED
             self.logger.error(f"Request {request.id} failed: {e}")
         finally:
+            request.total_duration = time.perf_counter() - request_start
+            self.logger.info(
+                f"Request {request.id} timing | total: {request.total_duration:.3f}s | "
+                f"phase1: {request.first_phase_duration:.3f}s | "
+                f"phase2: {request.second_phase_duration:.3f}s"
+            )
             request.completion_event.set()
 
     async def _handle_first_phase(self, request: QueuedRequest):
@@ -160,10 +167,12 @@ class TwoPhaseScheduler:
         """
         request.state = TaskState.PROCESSING_FIRST
         try:
+            phase_start = time.perf_counter()
             request.first_phase_result = await asyncio.wait_for(
                 request.first_fn(request.input),
                 timeout=self.request_timeout
             )
+            request.first_phase_duration = time.perf_counter() - phase_start
             request.generators_count = len(request.first_phase_result.get('parallel_inputs', []))
             # Initialize sequence_buffers here
             request.sequence_buffers = {i: [] for i in range(request.generators_count)}
@@ -184,6 +193,7 @@ class TwoPhaseScheduler:
             TimeoutError: If processing exceeds request_timeout.
         """
         parallel_inputs = request.first_phase_result.get('parallel_inputs', [])
+        phase_start = time.perf_counter()
         generator_tasks = [
             asyncio.create_task(self._process_generator(request, gen_input, idx))
             for idx, gen_input in enumerate(parallel_inputs)
@@ -194,6 +204,7 @@ class TwoPhaseScheduler:
                 asyncio.gather(*generator_tasks, return_exceptions=True),
                 timeout=self.request_timeout
             )
+            request.second_phase_duration = time.perf_counter() - phase_start
         except asyncio.TimeoutError:
             for task in generator_tasks:
                 if not task.done():
