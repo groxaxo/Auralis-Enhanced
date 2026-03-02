@@ -1,0 +1,10 @@
+{
+  "timestamp": "2026-03-02 22:50:55",
+  "tests": {
+    "novasr_processor": false,
+    "novasr_model_loading": false,
+    "tts_output": true,
+    "tts_request": true,
+    "full_pipeline": false
+  }
+}

@@ -207,8 +207,8 @@ class TTSRequest:
     length_penalty: float = 1.0
     do_sample: bool = True
 
-    # Audio super-resolution (FlashSR)
-    apply_flashsr: bool = False  # Disable FlashSR by default for compatibility
+    # Audio super-resolution (NovaSR)
+    apply_novasr: bool = False  # Disable NovaSR by default for compatibility
 
     def __post_init__(self):
         """Initialize request after dataclass creation.

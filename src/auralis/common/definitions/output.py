@@ -42,12 +42,12 @@ def peak_attenuate_only(x: np.ndarray, target_peak: float = 0.8, eps: float = 1e
 class TTSOutput:
     """Container for TTS inference output with integrated audio utilities
 
-    This class includes FlashSR audio super-resolution for enhanced output quality.
-    By default, audio is upsampled from 24kHz to 48kHz using FlashSR for professional-grade output.
+    This class includes NovaSR audio super-resolution for enhanced output quality.
+    By default, audio is upsampled from 24kHz to 48kHz using NovaSR for professional-grade output.
     """
 
     array: Union[np.ndarray, bytes]
-    sample_rate: int = 24000  # Initial output at 24kHz, upgraded to 48kHz with FlashSR
+    sample_rate: int = 24000  # Initial output at 24kHz, upgraded to 48kHz with NovaSR
     bit_depth: int = 32
     bit_rate: int = 192  # kbps
     compression: int = 10  #
@@ -56,7 +56,7 @@ class TTSOutput:
     start_time: Optional[float] = None
     end_time: Optional[float] = None
     token_length: Optional[int] = None
-    _flashsr_applied: bool = False  # Track if FlashSR has been applied
+    _novasr_applied: bool = False  # Track if NovaSR has been applied
 
     def __post_init__(self):
         if isinstance(self.array, bytes):
@@ -278,15 +278,15 @@ class TTSOutput:
         )
 
     def apply_super_resolution(
-        self, method: str = "flashsr", device: Optional[str] = None
+        self, method: str = "novasr", device: Optional[str] = None
     ) -> "TTSOutput":
         """Apply audio super-resolution for enhanced quality.
 
-        This method upsamples the audio to 48kHz using FlashSR for professional-quality output.
-        FlashSR provides 200-400x real-time processing with minimal overhead (~2MB model).
+        This method upsamples the audio to 48kHz using NovaSR for professional-quality output.
+        NovaSR provides 3600x real-time processing with minimal overhead (~52KB model).
 
         Args:
-            method (str): Super-resolution method ('flashsr' supported)
+            method (str): Super-resolution method ('novasr' supported)
             device (str, optional): Processing device ('cuda' or 'cpu')
 
         Returns:
@@ -297,41 +297,32 @@ class TTSOutput:
             >>> hq_output = output.apply_super_resolution()
             >>> hq_output.save('high_quality.wav')  # 48kHz
         """
-        # Avoid double application
-        if self._flashsr_applied:
+        if self._novasr_applied:
             return self
 
-        if method != "flashsr":
+        if method != "novasr":
             raise ValueError(
-                f"Unknown super-resolution method: {method}. Supported: 'flashsr'"
+                f"Unknown super-resolution method: {method}. Supported: 'novasr'"
             )
 
         try:
-            from auralis.common.enhancers.flashsr import get_flashsr_processor
+            from auralis.common.enhancers.novasr import get_novasr_processor
 
-            # Downsample to 16kHz for FlashSR input
             audio_16k = self.resample(16000)
 
-            # 1) Input Sanity
             input_array = to_float32_audio(audio_16k.array)
 
-            # 2) Pre-FlashSR Guard (Headroom)
-            # Attenuate input to 0.8 peak if hot, preventing internal model saturation
             input_array, in_peak, in_gain = peak_attenuate_only(
                 input_array, target_peak=0.8
             )
 
-            # Apply FlashSR super-resolution
-            processor = get_flashsr_processor(device=device)
+            processor = get_novasr_processor(device=device)
             enhanced_array, enhanced_sr = processor.process(input_array, sr=16000)
 
-            # 3) Post-FlashSR Safety Cap
-            # Final attenuation to 0.95 peak to prevent clipping
             enhanced_array, out_peak, out_gain = peak_attenuate_only(
                 enhanced_array, target_peak=0.95
             )
 
-            # Create new output with enhanced audio
             enhanced_output = TTSOutput(
                 array=enhanced_array,
                 sample_rate=enhanced_sr,
@@ -343,7 +334,7 @@ class TTSOutput:
                 end_time=self.end_time,
                 token_length=self.token_length,
             )
-            enhanced_output._flashsr_applied = True
+            enhanced_output._novasr_applied = True
 
             return enhanced_output
 
@@ -351,9 +342,7 @@ class TTSOutput:
             import logging
 
             logger = logging.getLogger(__name__)
-            logger.warning(
-                f"FlashSR enhancement failed: {e}. Returning original audio."
-            )
+            logger.warning(f"NovaSR enhancement failed: {e}. Returning original audio.")
             return self
 
     def get_info(self) -> Tuple[int, int, float]:

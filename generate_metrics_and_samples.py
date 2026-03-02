@@ -15,7 +15,7 @@ METRICS_FILE = os.path.join(SAMPLES_DIR, "metrics_report.json")
 # Sample texts (English)
 EN_TEXTS = [
     "Auralis Enhanced provides high-fidelity speech synthesis with ultra-low latency.",
-    "The integration of FlashSR allows for real-time upscaling from 24 kilohertz to 48 kilohertz.",
+    "The integration of NovaSR allows for real-time upscaling from 24 kilohertz to 48 kilohertz.",
     "Experience the power of advanced neural text-to-speech technology today.",
     "Our system is optimized for performance, ensuring smooth and natural-sounding audio.",
     "This is a demonstration of the robust audio saturation guards in the latest update.",
@@ -24,7 +24,7 @@ EN_TEXTS = [
 # Sample texts (Spanish)
 ES_TEXTS = [
     "Auralis Enhanced proporciona síntesis de voz de alta fidelidad con una latencia ultra baja.",
-    "La integración de FlashSR permite el escalado en tiempo real de 24 kilohercios a 48 kilohercios.",
+    "La integración de NovaSR permite el escalado en tiempo real de 24 kilohercios a 48 kilohercios.",
     "Experimente el poder de la tecnología avanzada de texto a voz neuronal hoy mismo.",
     "Nuestro sistema está optimizado para el rendimiento, garantizando un audio fluido y natural.",
     "Esta es una demostración de las protecciones contra la saturación de audio en la última actualización.",
@@ -55,7 +55,7 @@ async def generate_samples(tts):
 
             # 1. Base (24kHz)
             req_base = TTSRequest(
-                text=text, speaker_files=[speaker], language=lang, apply_flashsr=False
+                text=text, speaker_files=[speaker], language=lang, apply_novasr=False
             )
             start = time.perf_counter()
             out_base = await tts.generate_speech_async(req_base)
@@ -66,7 +66,7 @@ async def generate_samples(tts):
 
             # 2. Enhanced (48kHz)
             req_enh = TTSRequest(
-                text=text, speaker_files=[speaker], language=lang, apply_flashsr=True
+                text=text, speaker_files=[speaker], language=lang, apply_novasr=True
             )
             start_enh = time.perf_counter()
             out_enh = await tts.generate_speech_async(req_enh)

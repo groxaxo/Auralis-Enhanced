@@ -1,0 +1,132 @@
+{
+  "timestamp": "2026-03-02 23:07:01",
+  "gpu": "NVIDIA GeForce RTX 3090",
+  "passed": 30,
+  "failed": 1,
+  "results": {
+    "1a. Model Loading": {
+      "success": true,
+      "details": "0.67s"
+    },
+    "1b. Basic Inference": {
+      "success": true,
+      "details": "Output: 47996 samples (expected ~48000)"
+    },
+    "1c. RTF < 0.1x": {
+      "success": false,
+      "details": "RTF: 0.2029x (5x realtime)"
+    },
+    "1d. Output in valid range": {
+      "success": "True",
+      "details": "Max amplitude: 0.4956"
+    },
+    "2a. Processor Initialization": {
+      "success": true,
+      "details": "Device: cuda"
+    },
+    "2b. Fallback Upsampling": {
+      "success": true,
+      "details": "Output: 48000 samples"
+    },
+    "2c. Model Loading via Processor": {
+      "success": true,
+      "details": "Load time: 0.25s"
+    },
+    "2d. Process Method": {
+      "success": true,
+      "details": "SR: 48000, Samples: 47996"
+    },
+    "2e. Singleton Pattern": {
+      "success": true,
+      "details": ""
+    },
+    "2f. Invalid SR Rejection": {
+      "success": true,
+      "details": "NovaSR requires 16kHz input, got 22050Hz. Please resample to 16kHz before processing."
+    },
+    "3a. Has _novasr_applied": {
+      "success": true,
+      "details": ""
+    },
+    "3b. Default _novasr_applied=False": {
+      "success": true,
+      "details": ""
+    },
+    "3c. Has apply_super_resolution": {
+      "success": true,
+      "details": ""
+    },
+    "3d. Invalid method rejected": {
+      "success": true,
+      "details": ""
+    },
+    "4a. Has apply_novasr": {
+      "success": true,
+      "details": ""
+    },
+    "4b. Default apply_novasr=False": {
+      "success": true,
+      "details": ""
+    },
+    "4c. Can enable apply_novasr": {
+      "success": true,
+      "details": ""
+    },
+    "5a. Save 48kHz audio": {
+      "success": true,
+      "details": "/home/op/Auralis-Enhanced/test_output/novasr_quality_test.wav"
+    },
+    "5b. File size reasonable": {
+      "success": true,
+      "details": "Size: 192070 bytes"
+    },
+    "5c. Reload sample rate": {
+      "success": true,
+      "details": "SR: 48000"
+    },
+    "5d. Audio not silent": {
+      "success": "tensor(True)",
+      "details": "Max: 0.4951"
+    },
+    "6a. Whisper loaded": {
+      "success": true,
+      "details": ""
+    },
+    "6b. Avg similarity > 80%": {
+      "success": true,
+      "details": "89.8%"
+    },
+    "6c. Avg similarity > 85%": {
+      "success": true,
+      "details": "89.8%"
+    },
+    "7a. Avg RTF < 0.1x": {
+      "success": true,
+      "details": "0.0142x"
+    },
+    "7b. Max RTF < 0.2x": {
+      "success": true,
+      "details": "0.0533x"
+    },
+    "7c. Memory stable (<100MB increase)": {
+      "success": true,
+      "details": "+0.0MB"
+    },
+    "8a. Very short audio (0.1s)": {
+      "success": true,
+      "details": "4796 samples"
+    },
+    "8b. Silence preserved": {
+      "success": "True",
+      "details": "Max: 0.007812"
+    },
+    "8c. No clipping on max input": {
+      "success": "True",
+      "details": "Max: 0.8423"
+    },
+    "8d. DC offset handled": {
+      "success": true,
+      "details": ""
+    }
+  }
+}

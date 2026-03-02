@@ -898,8 +898,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                             token_length=len(output.outputs[0].token_ids),
                         )
 
-                        # Apply FlashSR super-resolution if enabled
-                        if request.apply_flashsr:
+                        # Apply NovaSR super-resolution if enabled
+                        if request.apply_novasr:
                             tts_output = tts_output.apply_super_resolution()
 
                         yield tts_output

@@ -93,7 +93,7 @@ def process_text_and_generate(
     top_k,
     repetition_penalty,
     language,
-    apply_flashsr,
+    apply_novasr,
     *args,
 ):
     """Process text and generate audio."""
@@ -102,7 +102,6 @@ def process_text_and_generate(
         log_messages += "Please provide at least one reference audio!\n"
         return None, log_messages
 
-    # clone voices from all file paths (shorten them)
     base64_voices = ref_audio_files[:5]
 
     request = TTSRequest(
@@ -115,7 +114,7 @@ def process_text_and_generate(
         top_k=top_k,
         repetition_penalty=repetition_penalty,
         language=language,
-        apply_flashsr=apply_flashsr,
+        apply_novasr=apply_novasr,
     )
 
     try:
@@ -142,7 +141,7 @@ def build_gradio_ui():
             """
           # Auralis Text-to-Speech Demo 🌌
           Convert text to speech with advanced voice cloning and enhancement.
-          **FlashSR upscaling enabled by default** (48kHz professional audio quality).
+          **NovaSR upscaling available** (48kHz professional audio quality).
           """
         )
 
@@ -167,8 +166,8 @@ def build_gradio_ui():
                         enhance_speech = gr.Checkbox(
                             label="Enhance Reference Speech", value=False
                         )
-                        apply_flashsr = gr.Checkbox(
-                            label="Enable FlashSR upscaling (48kHz output)", value=False
+                        apply_novasr = gr.Checkbox(
+                            label="Enable NovaSR upscaling (48kHz output)", value=False
                         )
                         temperature = gr.Slider(
                             label="Temperature",
@@ -235,7 +234,7 @@ def build_gradio_ui():
                     top_k,
                     repetition_penalty,
                     language,
-                    apply_flashsr,
+                    apply_novasr,
                 ],
                 outputs=[audio_output, log_output],
             )
@@ -260,8 +259,8 @@ def build_gradio_ui():
                         enhance_speech_file = gr.Checkbox(
                             label="Enhance Reference Speech", value=False
                         )
-                        apply_flashsr_file = gr.Checkbox(
-                            label="Enable FlashSR upscaling (48kHz output)", value=False
+                        apply_novasr_file = gr.Checkbox(
+                            label="Enable NovaSR upscaling (48kHz output)", value=False
                         )
                         temperature_file = gr.Slider(
                             label="Temperature",
@@ -326,7 +325,7 @@ def build_gradio_ui():
                 top_k_file,
                 repetition_penalty_file,
                 language_file,
-                apply_flashsr_file,
+                apply_novasr_file,
             ):
                 if file_input:
                     file_extension = Path(file_input.name).suffix
@@ -350,8 +349,8 @@ def build_gradio_ui():
                         top_k_file,
                         repetition_penalty_file,
                         language_file,
-                        apply_flashsr_file,
-                        apply_flashsr_file,
+                        apply_novasr_file,
+                        apply_novasr_file,
                     )
                 else:
                     return None, "Please provide an .epub or .txt file!"
@@ -394,8 +393,8 @@ def build_gradio_ui():
                         enhance_speech_mic = gr.Checkbox(
                             label="Enhance Reference Speech", value=True
                         )
-                        apply_flashsr_mic = gr.Checkbox(
-                            label="Enable FlashSR upscaling (48kHz output)", value=False
+                        apply_novasr_mic = gr.Checkbox(
+                            label="Enable NovaSR upscaling (48kHz output)", value=False
                         )
                         temperature_mic = gr.Slider(
                             label="Temperature",
@@ -462,7 +461,7 @@ def build_gradio_ui():
                 top_k_mic,
                 repetition_penalty_mic,
                 language_mic,
-                apply_flashsr_mic,
+                apply_novasr_mic,
             ):
                 if mic_ref_audio:
                     data = str(time.time()).encode("utf-8")
@@ -484,8 +483,8 @@ def build_gradio_ui():
                             top_k_mic,
                             repetition_penalty_mic,
                             language_mic,
-                            apply_flashsr_mic,
-                            apply_flashsr_mic,
+                            apply_novasr_mic,
+                            apply_novasr_mic,
                         )
                     except Exception as e:
                         logger.error(f"Error saving audio file: {e}")

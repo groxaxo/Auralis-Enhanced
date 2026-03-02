@@ -1,0 +1,47 @@
+{
+  "timestamp": "2026-03-02 22:52:29",
+  "tests": {
+    "novasr_direct": true,
+    "novasr_processor_module": true,
+    "tts_output_attributes": true,
+    "tts_request_attributes": true,
+    "whisper_transcription": true
+  },
+  "whisper_results": {
+    "sample_1": {
+      "base_text": "or Alice Enhance provides high fidelity speech synthesis with ultra low latency.",
+      "enhanced_text": "or a less enhanced provide high fidelity speech synthesis with ultra low latency.",
+      "similarity": 0.6923076923076923,
+      "base_time": 2.4299363440077286,
+      "enhanced_time": 1.1950806030072272
+    },
+    "sample_2": {
+      "base_text": "The integration of flash ashara allows for real time upscaling from 24 kilohertz to 48 kilohertz",
+      "enhanced_text": "The integration of flasher allows for real time upscaling from 24 kHz to 48 kHz.",
+      "similarity": 0.8,
+      "base_time": 0.7879699939949205,
+      "enhanced_time": 0.7964758040034212
+    },
+    "sample_3": {
+      "base_text": "Experience the power of advanced neural text-to-speech technology today.",
+      "enhanced_text": "Experience the power of advanced neural text-to-speech technology today.",
+      "similarity": 1.0,
+      "base_time": 0.8040304840105819,
+      "enhanced_time": 0.4879021649976494
+    },
+    "sample_4": {
+      "base_text": "Our system is optimized for performance, ensuring smooth and natural sounding audio.",
+      "enhanced_text": "Our system is optimized for performance, ensuring smooth and natural sounding audio.",
+      "similarity": 1.0,
+      "base_time": 1.3213108780037146,
+      "enhanced_time": 0.37845927500166
+    },
+    "sample_5": {
+      "base_text": "This is a demonstration of the robust audio saturation guards in the latest update.",
+      "enhanced_text": "This is a demonstration of the robust audio saturation guards in the latest update.",
+      "similarity": 1.0,
+      "base_time": 0.4136418730049627,
+      "enhanced_time": 0.43820687499828637
+    }
+  }
+}
