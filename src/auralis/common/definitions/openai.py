@@ -145,6 +145,9 @@ class AudioSpeechGenerationRequest(BaseModel):
     repetition_penalty: float = Field(default=tts_defaults["repetition_penalty"])
     length_penalty: float = Field(default=tts_defaults["length_penalty"])
     do_sample: bool = Field(default=tts_defaults["do_sample"])
+    apply_novasr: bool = Field(
+        default=False, description="Apply NovaSR audio super-resolution (48kHz)"
+    )
 
     @field_validator("voice")
     def validate_speaker_files(cls, v):
@@ -232,4 +235,5 @@ class AudioSpeechGenerationRequest(BaseModel):
             repetition_penalty=self.repetition_penalty,
             length_penalty=self.length_penalty,
             do_sample=self.do_sample,
+            apply_novasr=self.apply_novasr,
         )

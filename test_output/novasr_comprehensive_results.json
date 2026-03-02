@@ -1,24 +1,24 @@
 {
-  "timestamp": "2026-03-02 23:07:01",
+  "timestamp": "2026-03-03 11:48:00",
   "gpu": "NVIDIA GeForce RTX 3090",
-  "passed": 30,
-  "failed": 1,
+  "passed": 31,
+  "failed": 0,
   "results": {
     "1a. Model Loading": {
       "success": true,
-      "details": "0.67s"
+      "details": "0.58s"
     },
     "1b. Basic Inference": {
       "success": true,
       "details": "Output: 47996 samples (expected ~48000)"
     },
     "1c. RTF < 0.1x": {
-      "success": false,
-      "details": "RTF: 0.2029x (5x realtime)"
+      "success": true,
+      "details": "RTF: 0.0331x (30x realtime)"
     },
     "1d. Output in valid range": {
       "success": "True",
-      "details": "Max amplitude: 0.4956"
+      "details": "Max amplitude: 0.4951"
     },
     "2a. Processor Initialization": {
       "success": true,
@@ -30,7 +30,7 @@
     },
     "2c. Model Loading via Processor": {
       "success": true,
-      "details": "Load time: 0.25s"
+      "details": "Load time: 0.26s"
     },
     "2d. Process Method": {
       "success": true,
@@ -102,11 +102,11 @@
     },
     "7a. Avg RTF < 0.1x": {
       "success": true,
-      "details": "0.0142x"
+      "details": "0.0135x"
     },
     "7b. Max RTF < 0.2x": {
       "success": true,
-      "details": "0.0533x"
+      "details": "0.0505x"
     },
     "7c. Memory stable (<100MB increase)": {
       "success": true,

@@ -11,6 +11,7 @@ from typing import Optional
 import aiohttp
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.responses import StreamingResponse
 
@@ -200,6 +201,15 @@ async def lifecycle_manager(app: FastAPI):
 
 # Initialize FastAPI application
 app = FastAPI(lifespan=lifecycle_manager)
+
+# Add CORS middleware to allow frontend requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health")
