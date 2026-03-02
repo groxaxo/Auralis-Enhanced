@@ -10,7 +10,7 @@
 
 **Process an entire novel in minutes, not hours. Convert books to speech with professional 48kHz audio quality powered by NovaSR!**
 
-[Quick Start](#quick-start-) • [Deployment](#-server-deployment) • [Features](#key-features-) • [Performance](#-performance--benchmarks) • [Credits](#-acknowledgments)
+[Quick Start](#quick-start-) • [Docker GPU Deploy](#-docker-gpu-deploy) • [Features](#key-features-) • [Performance](#-performance--benchmarks) • [Credits](#-acknowledgments)
 
 </div>
 
@@ -136,21 +136,51 @@ print(f"Enhanced rate: {enhanced.sample_rate}")  # 48000
 
 ---
 
-## 🚀 Server Deployment
+## 🚀 Docker GPU Deploy
 
-This fork is built for the network. Both the API and UI are accessible from `0.0.0.0` by default.
+Run the backend with NVIDIA GPU support in one command.
 
-### Start Backend API
+### 1. Build image
+```bash
+docker build -t auralis-enhanced:latest .
+```
+
+### 2. Start API container (GPU)
+```bash
+docker run -d --name auralis-enhanced \
+  --gpus all \
+  -p 8000:8000 \
+  auralis-enhanced:latest \
+  --host 0.0.0.0 --port 8000
+```
+
+### 3. Verify service
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+### 4. Optional: Run the Next.js frontend
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The frontend defaults to `http://localhost:8000` for API requests.
+
+## 🌐 Local Server Deployment (without Docker)
+
+### Start backend API
 ```bash
 python -m auralis.entrypoints.oai_server --host 0.0.0.0 --port 8000
 ```
 
-### Start Frontend UI
+### Start frontend UI
 ```bash
-cd examples && python gradio_example.py
+cd frontend
+npm install
+npm run dev
 ```
-
-For advanced deployment (systemd, Docker, Nginx), see the **[Server Deployment Guide](docs/deployment/server-setup.md)**.
 
 ---
 
