@@ -518,9 +518,10 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         try:
             yield
         finally:
-            torch.cuda.synchronize()
-            await asyncio.sleep(0.1)
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+                await asyncio.sleep(0.1)
+                torch.cuda.empty_cache()
 
     def get_style_emb(
         self, cond_input: torch.Tensor, return_latent: Optional[bool] = False
@@ -876,33 +877,27 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
                 async with self.decoder_semaphore:
                     async with self.cuda_memory_manager():
-                        wav = (
-                            (
-                                await asyncio.to_thread(
-                                    self.hifigan_decoder,
-                                    hidden_states,
-                                    g=speaker_embeddings,
-                                )
-                            )
-                            .cpu()
-                            .detach()
-                            .numpy()
-                            .squeeze()
+                        wav_tensor = await asyncio.to_thread(
+                            self.hifigan_decoder,
+                            hidden_states,
+                            g=speaker_embeddings,
                         )
-                        # noqa
+                        wav = wav_tensor.detach().cpu().numpy().squeeze()
+                        del wav_tensor
+                        del hidden_states
 
-                        # Create the audio output
-                        tts_output = TTSOutput(
-                            array=wav,
-                            start_time=request.start_time,
-                            token_length=len(output.outputs[0].token_ids),
-                        )
+                # Create the audio output
+                tts_output = TTSOutput(
+                    array=wav,
+                    start_time=request.start_time,
+                    token_length=len(output.outputs[0].token_ids),
+                )
 
-                        # Apply NovaSR super-resolution if enabled
-                        if request.apply_novasr:
-                            tts_output = tts_output.apply_super_resolution()
+                # Apply NovaSR super-resolution if enabled
+                if request.apply_novasr:
+                    tts_output = tts_output.apply_super_resolution()
 
-                        yield tts_output
+                yield tts_output
 
     async def shutdown(self):
         self.llm_engine.shutdown_background_loop()
