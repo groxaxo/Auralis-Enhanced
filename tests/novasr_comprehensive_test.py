@@ -14,9 +14,22 @@ import traceback
 from pathlib import Path
 
 import numpy as np
+
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "2")  # Use RTX 3060 if present
+
 import torch
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"  # Use RTX 3060
+
+def _timed_infer(model, audio_tensor):
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    start = time.perf_counter()
+    with torch.no_grad():
+        enhanced = model.infer(audio_tensor)
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    return enhanced, time.perf_counter() - start
+
 
 print("=" * 70)
 print("🧪 NovaSR Comprehensive Test Suite")
@@ -77,10 +90,9 @@ try:
         torch.from_numpy(audio_16k).float().unsqueeze(0).unsqueeze(1).cuda().half()
     )
 
-    start = time.perf_counter()
-    with torch.no_grad():
-        enhanced = upsampler.infer(audio_tensor)
-    process_time = time.perf_counter() - start
+    # Warmup run to avoid one-time GPU startup overhead skewing RTF checks
+    _timed_infer(upsampler, audio_tensor)
+    enhanced, process_time = _timed_infer(upsampler, audio_tensor)
 
     enhanced_np = enhanced.cpu().float().numpy().squeeze()
     expected_len = 48000
