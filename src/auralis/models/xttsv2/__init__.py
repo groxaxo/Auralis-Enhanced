@@ -6,7 +6,7 @@ register_model("xtts", XTTSv2Engine)
 try:
     from vllm import ModelRegistry
     from .components.vllm_mm_gpt import XttsGPT
-except Exception:
+except ImportError:
     pass
 else:
     ModelRegistry.register_model("XttsGPT", XttsGPT)

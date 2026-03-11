@@ -102,9 +102,9 @@ async def ensure_tts_engine(args=None) -> TTS:
 
             def create_tts_engine():
                 """Synchronous TTS engine creation."""
-                scheduler_concurrency = max(1, args.max_concurrency)
-                if args.device == "cpu":
-                    scheduler_concurrency = 1
+                scheduler_concurrency = (
+                    1 if args.device == "cpu" else max(1, args.max_concurrency)
+                )
 
                 return TTS(
                     scheduler_max_concurrency=scheduler_concurrency,

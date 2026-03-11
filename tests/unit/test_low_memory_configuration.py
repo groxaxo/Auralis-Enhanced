@@ -3,6 +3,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_GPU_MEMORY_UTILIZATION = 0.35
+DEFAULT_CPU_OFFLOAD_GB = 8.0
+DEFAULT_SWAP_SPACE = 2.0
 
 
 def _parse_module(relative_path: str) -> ast.Module:
@@ -99,9 +102,9 @@ def test_server_exposes_low_memory_cli_defaults():
 
     assert defaults["--max_concurrency"] == 1
     assert defaults["--device"] == "auto"
-    assert defaults["--gpu_memory_utilization"] == 0.35
-    assert defaults["--cpu_offload_gb"] == 8.0
-    assert defaults["--swap_space"] == 2.0
+    assert defaults["--gpu_memory_utilization"] == DEFAULT_GPU_MEMORY_UTILIZATION
+    assert defaults["--cpu_offload_gb"] == DEFAULT_CPU_OFFLOAD_GB
+    assert defaults["--swap_space"] == DEFAULT_SWAP_SPACE
 
 
 def test_server_passes_device_and_memory_knobs_to_model_loading():
@@ -173,4 +176,4 @@ def test_xtts_vllm_engine_configuration_has_cpu_and_gpu_paths():
 
     assert subscript_assignments["engine_kwargs['swap_space']"] == "self.swap_space"
     assert subscript_assignments["engine_kwargs['cpu_offload_gb']"] == "self.cpu_offload_gb"
-    assert subscript_assignments["engine_kwargs['gpu_memory_utilization']"] == "mem_utils"
+    assert subscript_assignments["engine_kwargs['gpu_memory_utilization']"] == "mem_utilization"

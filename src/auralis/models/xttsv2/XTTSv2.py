@@ -230,6 +230,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             RuntimeError: If unable to determine memory usage for model initialization.
         """
         """Initialize models with AsyncVLLMEngine."""
+        # CPU inference is restricted to a single sequence to avoid runaway host memory use.
         max_seq_num = 1 if self.is_cpu else concurrency
         max_model_len = (
             self.gpt_config.max_text_tokens
@@ -255,16 +256,16 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         if self.is_cpu:
             engine_kwargs["swap_space"] = self.swap_space
         else:
-            mem_utils = self.gpu_memory_utilization
-            if mem_utils is None:
-                mem_utils = self.get_memory_percentage(
+            mem_utilization = self.gpu_memory_utilization
+            if mem_utilization is None:
+                mem_utilization = self.get_memory_percentage(
                     self.max_gb_for_vllm_model * 1024**3
                 )
-            if not mem_utils:
+            if not mem_utilization:
                 raise RuntimeError(
                     "Could not determine GPU memory utilization for vLLM initialization."
                 )
-            engine_kwargs["gpu_memory_utilization"] = mem_utils
+            engine_kwargs["gpu_memory_utilization"] = mem_utilization
             engine_kwargs["cpu_offload_gb"] = self.cpu_offload_gb
             engine_kwargs["swap_space"] = self.swap_space
 
