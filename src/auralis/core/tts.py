@@ -24,7 +24,7 @@ class TTS:
     with support for streaming output and parallel processing of multiple requests.
     """
 
-    def __init__(self, scheduler_max_concurrency: int = 10, vllm_logging_level=logging.DEBUG):
+    def __init__(self, scheduler_max_concurrency: int = 1, vllm_logging_level=logging.DEBUG):
         """Initialize the TTS engine.
 
         Args:
@@ -218,7 +218,8 @@ class TTS:
                 ):
                     if request.stream:
                         yield chunk
-                    chunks.append(chunk)
+                    else:
+                        chunks.append(chunk)
             except Exception as e:
                 self.logger.error(f"Error during speech generation: {e}")
                 raise

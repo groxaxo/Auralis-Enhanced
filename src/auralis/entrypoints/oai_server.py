@@ -85,7 +85,11 @@ async def ensure_tts_engine(args=None) -> TTS:
                     args = argparse.Namespace(
                         model="AstraMindAI/xttsv2",
                         gpt_model="AstraMindAI/xtts2-gpt",
-                        max_concurrency=8,
+                        max_concurrency=1,
+                        device="auto",
+                        gpu_memory_utilization=0.35,
+                        cpu_offload_gb=8.0,
+                        swap_space=2.0,
                         vllm_logging_level="warn",
                     )
 
@@ -98,13 +102,21 @@ async def ensure_tts_engine(args=None) -> TTS:
 
             def create_tts_engine():
                 """Synchronous TTS engine creation."""
+                scheduler_concurrency = max(1, args.max_concurrency)
+                if args.device == "cpu":
+                    scheduler_concurrency = 1
+
                 return TTS(
-                    scheduler_max_concurrency=args.max_concurrency,
+                    scheduler_max_concurrency=scheduler_concurrency,
                     vllm_logging_level=logging_level,
                 ).from_pretrained(
                     args.model,
                     gpt_model=args.gpt_model,
-                    max_concurrency=args.max_concurrency,  # Pass to model for VLLM config
+                    device_map=args.device,
+                    max_concurrency=scheduler_concurrency,
+                    gpu_memory_utilization=args.gpu_memory_utilization,
+                    cpu_offload_gb=args.cpu_offload_gb,
+                    swap_space=args.swap_space,
                 )
 
             # Run synchronous initialization in thread pool
@@ -504,8 +516,33 @@ def main():
     parser.add_argument(
         "--max_concurrency",
         type=int,
-        default=8,
+        default=1,
         help="The concurrency value that is used in the TTS Engine, it is directly connected to the memory consumption",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        choices=["auto", "cuda", "cpu"],
+        default="auto",
+        help="Target device for inference",
+    )
+    parser.add_argument(
+        "--gpu_memory_utilization",
+        type=float,
+        default=0.35,
+        help="Fraction of GPU memory reserved by vLLM",
+    )
+    parser.add_argument(
+        "--cpu_offload_gb",
+        type=float,
+        default=8.0,
+        help="CPU offload in GiB per GPU for vLLM",
+    )
+    parser.add_argument(
+        "--swap_space",
+        type=float,
+        default=2.0,
+        help="CPU swap space in GiB per GPU for vLLM",
     )
     parser.add_argument(
         "--vllm_logging_level",
