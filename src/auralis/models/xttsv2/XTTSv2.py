@@ -82,6 +82,10 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.logger.info("Initializing XTTSv2Engine...")
 
         self.gpt_model = kwargs.pop("gpt_model")
+        self.device_map = kwargs.pop("device_map", "auto")
+        self.gpu_memory_utilization = kwargs.pop("gpu_memory_utilization", 0.35)
+        self.cpu_offload_gb = kwargs.pop("cpu_offload_gb", 8.0)
+        self.swap_space = kwargs.pop("swap_space", 2.0)
         self.hifi_config = hifi_config
         self.gpt_config = gpt_config
         self.mel_bos_token_id = gpt_config.start_audio_token
@@ -91,8 +95,14 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.tokenizer = XTTSTokenizerFast.from_pretrained(self.gpt_model)
         self.request_counter = Counter()
 
-        self.max_concurrency = kwargs.pop("max_concurrency", 10)
-        semaphore_concurrency = max(1, self.max_concurrency // 6) * self.tp
+        requested_concurrency = kwargs.pop("max_concurrency", 1)
+        self.is_cpu = self.device_map == "cpu" or (
+            self.device_map == "auto" and not torch.cuda.is_available()
+        )
+        self.max_concurrency = 1 if self.is_cpu else max(1, requested_concurrency)
+        semaphore_concurrency = (
+            1 if self.is_cpu else max(1, self.max_concurrency // 6) * self.tp
+        )
 
         # Register buffer before creating modules
         self.register_buffer("mel_stats", torch.ones(80))
@@ -149,7 +159,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             gpt_config.hidden_size, gpt_config.number_text_tokens, bias=True
         )
 
-        self.get_memory_usage_curve()
+        if not self.is_cpu:
+            self.get_memory_usage_curve()
 
         # Initialize VLLM engine at the end, settings its concurrency
         self.init_vllm_engine(self.max_concurrency)
@@ -219,39 +230,47 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             RuntimeError: If unable to determine memory usage for model initialization.
         """
         """Initialize models with AsyncVLLMEngine."""
-        max_seq_num = concurrency
-        mem_utils = self.get_memory_percentage(self.max_gb_for_vllm_model * 1024**3)  #
-        if not mem_utils:
-            raise RuntimeError(
-                "Could not find the memory usage for the VLLM model initialization."
-            )
-        engine_args = AsyncEngineArgs(
-            model=self.gpt_model,
-            tensor_parallel_size=self.tp,
-            pipeline_parallel_size=self.pp,
-            dtype="auto",
-            max_model_len=self.gpt_config.max_text_tokens
+        # CPU inference is restricted to a single sequence to avoid runaway host memory use.
+        max_seq_num = 1 if self.is_cpu else concurrency
+        max_model_len = (
+            self.gpt_config.max_text_tokens
             + self.gpt_config.max_audio_tokens
             + 32
             + 5
-            + 3,  # this is from the xttsv2 code, 32 is the conditioning sql
-            gpu_memory_utilization=mem_utils,
+            + 3
+        )
+        engine_kwargs = dict(
+            model=self.gpt_model,
+            tensor_parallel_size=1 if self.is_cpu else self.tp,
+            pipeline_parallel_size=1 if self.is_cpu else self.pp,
+            dtype="float32" if self.is_cpu else "auto",
+            max_model_len=max_model_len,
             trust_remote_code=True,
             enforce_eager=True,
-            limit_mm_per_prompt={
-                "audio": 1
-            },  # even if more audio are present, they'll be condendesed into one
+            limit_mm_per_prompt={"audio": 1},
             max_num_seqs=max_seq_num,
-            disable_log_stats=True,  # temporary fix for the log stats, there is a known bug in vllm that will be fixed in the next relaese
-            max_num_batched_tokens=(
-                self.gpt_config.max_text_tokens
-                + self.gpt_config.max_audio_tokens
-                + 32
-                + 5
-                + 3
-            )
-            * max_seq_num,
-            # We round to the nearest multiple of 32 and multiply by max_seq_num to get the max batched number (arbitrary) of tokens
+            disable_log_stats=True,
+            max_num_batched_tokens=max_model_len * max_seq_num,
+        )
+
+        if self.is_cpu:
+            engine_kwargs["swap_space"] = self.swap_space
+        else:
+            mem_utilization = self.gpu_memory_utilization
+            if mem_utilization is None:
+                mem_utilization = self.get_memory_percentage(
+                    self.max_gb_for_vllm_model * 1024**3
+                )
+            if not mem_utilization:
+                raise RuntimeError(
+                    "Could not determine GPU memory utilization for vLLM initialization."
+                )
+            engine_kwargs["gpu_memory_utilization"] = mem_utilization
+            engine_kwargs["cpu_offload_gb"] = self.cpu_offload_gb
+            engine_kwargs["swap_space"] = self.swap_space
+
+        engine_args = AsyncEngineArgs(
+            **engine_kwargs,
         )
         self.logger.info(f"Initializing VLLM engine with args: {engine_args}")
         self.llm_engine = AsyncLLMEngine.from_engine_args(engine_args)
@@ -301,6 +320,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         # Initialize configs
         gpt_config = XTTSGPTConfig(**config["gpt_config"])
         hifi_config = XTTSConfig(**config)
+        kwargs["device_map"] = device_map
 
         # Initialize model
         model = cls(
@@ -321,18 +341,21 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 pretrained_model_name_or_path, "xtts-v2.safetensors"
             )
 
-        import safetensors.torch
-
         # Load HiFi-GAN weights
-        hifigan_state = safetensors.torch.load_file(hifigan_weights)
-        model.load_state_dict(hifigan_state)
+        from safetensors.torch import load_model
+
+        load_model(model, hifigan_weights, strict=True)
 
         # Set model properties
         model.config = config
 
+        target_device = device_map
+        if target_device in (None, "auto"):
+            target_device = "cuda" if torch.cuda.is_available() else "cpu"
+
         # Cast model to specified dtype
         model = model.to(torch_dtype)
-        model = model.to("cuda")
+        model = model.to(target_device)
 
         return model
 
