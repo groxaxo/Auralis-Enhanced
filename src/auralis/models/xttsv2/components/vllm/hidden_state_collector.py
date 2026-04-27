@@ -1,8 +1,6 @@
 import threading
 from typing import Optional, Dict, List, Callable
 import torch
-from queue import Queue
-from concurrent.futures import ThreadPoolExecutor
 
 from auralis.common.logging.logger import setup_logger
 
@@ -62,8 +60,6 @@ class HiddenStatesCollector:
         self.logger = setup_logger(__file__)
         self.states_count: Dict[str, int] = {}
         self.expected_states: Dict[str, int] = {}
-        self.notifications: Dict[str, Queue] = {}
-        self.executor = ThreadPoolExecutor(max_workers=4)
 
     def initialize_request(self, request_id: str):
         """Initialize collection resources for a new request.
@@ -82,7 +78,6 @@ class HiddenStatesCollector:
                 self.outputs[request_id] = []
                 self.states_count[request_id] = 0
                 self.expected_states[request_id] = 1
-                self.notifications[request_id] = Queue()
                 self.collection_ready[request_id].set()
                 self.logger.debug(f"Initialized collector for request {request_id}")
 
@@ -115,7 +110,6 @@ class HiddenStatesCollector:
 
                     if self.states_count[request_id] >= self.expected_states[request_id]:
                         self.collection_complete[request_id].set()
-                        self.notifications[request_id].put(True)
                 else:
                     self.logger.warning(f"Received None hidden states for request {request_id}")
         except Exception as e:
@@ -145,6 +139,7 @@ class HiddenStatesCollector:
 
             # Wait for completion using threading.Event
             if not self.collection_complete[request_id].wait(timeout):
+                self._cleanup_request(request_id)
                 return None
 
             with self.locks[request_id]:
@@ -155,7 +150,7 @@ class HiddenStatesCollector:
                                      f"this should not happen, please open an issue on github")
 
                 try:
-                    result = torch.cat(outputs, dim=0)
+                    result = outputs[0] if len(outputs) == 1 else torch.cat(outputs, dim=0)
                     self._cleanup_request(request_id)
                     return result
                 except Exception as e:
@@ -182,7 +177,6 @@ class HiddenStatesCollector:
             self.locks.pop(request_id, None)
             self.states_count.pop(request_id, None)
             self.expected_states.pop(request_id, None)
-            self.notifications.pop(request_id, None)
             self.logger.debug(f"Cleaned up request {request_id}")
 
     def bind_to_request(self, request_id: str) -> SyncCollectorWrapper:
