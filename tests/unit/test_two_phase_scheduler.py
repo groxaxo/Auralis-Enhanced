@@ -115,8 +115,9 @@ def test_yield_ordered_outputs_wakes_immediately_on_generator_error():
                 return {"parallel_inputs": [None]}
 
             async def _second_fn(_):
+                if False:
+                    yield None
                 raise RuntimeError("boom")
-                yield
 
             async def _consume():
                 async for _ in scheduler.run(
