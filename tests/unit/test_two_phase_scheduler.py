@@ -104,3 +104,35 @@ def test_process_request_tracks_phase_durations():
         assert request.total_duration >= request.second_phase_duration
 
     asyncio.run(_run())
+
+
+def test_yield_ordered_outputs_wakes_immediately_on_generator_error():
+    async def _run():
+        definitions_module, scheduler_module = _load_scheduler_modules()
+        scheduler = scheduler_module.TwoPhaseScheduler(request_timeout=5)
+        try:
+            async def _first_fn(_):
+                return {"parallel_inputs": [None]}
+
+            async def _second_fn(_):
+                raise RuntimeError("boom")
+                yield
+
+            async def _consume():
+                async for _ in scheduler.run(
+                    inputs=None,
+                    request_id="req-4",
+                    first_phase_fn=_first_fn,
+                    second_phase_fn=_second_fn,
+                ):
+                    pass
+
+            await asyncio.wait_for(_consume(), timeout=0.2)
+        except RuntimeError as exc:
+            assert str(exc) == "boom"
+        else:
+            raise AssertionError("Expected the waiting consumer to raise the generator error")
+        finally:
+            await scheduler.shutdown()
+
+    asyncio.run(_run())

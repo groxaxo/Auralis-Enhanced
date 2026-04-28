@@ -274,7 +274,6 @@ class TwoPhaseScheduler:
         """
         generator = request.second_fn(generator_input)
         buffer = request.sequence_buffers[sequence_idx]
-        ready_event = request.buffer_ready_events.get(sequence_idx)
 
         while True:
             try:
@@ -285,16 +284,20 @@ class TwoPhaseScheduler:
 
                 buffer.append(item)
                 # Wake the output-collection loop immediately.
-                if ready_event is not None:
-                    ready_event.set()
+                self._notify_buffer_ready(request, sequence_idx)
             except StopAsyncIteration:
                 self.logger.debug(f"Generator {sequence_idx} completed for request {request.id}")
                 # Signal in case the consumer is waiting and there are no more items.
-                if ready_event is not None:
-                    ready_event.set()
+                self._notify_buffer_ready(request, sequence_idx)
                 break
             except asyncio.TimeoutError:
                 raise TimeoutError(f"Generator {sequence_idx} timed out")
+
+    def _notify_buffer_ready(self, request: QueuedRequest, sequence_idx: int):
+        """Wake any consumer waiting on a sequence buffer state change."""
+        ready_event = request.buffer_ready_events.get(sequence_idx)
+        if ready_event is not None:
+            ready_event.set()
 
     def _handle_generator_error(self, request: QueuedRequest, sequence_idx: int, error: Exception):
         """Handle errors from a generator.
@@ -309,6 +312,7 @@ class TwoPhaseScheduler:
         self.logger.error(f"Generator {sequence_idx} failed for request {request.id}: {error}")
         if request.error is None:
             request.error = error
+        self._notify_buffer_ready(request, sequence_idx)
 
     async def _cleanup_generator(self, request: QueuedRequest, sequence_idx: int):
         """Clean up resources after a generator completes.
@@ -324,6 +328,7 @@ class TwoPhaseScheduler:
             request.completed_generators += 1
             if sequence_idx in request.generator_events:
                 request.generator_events[sequence_idx].set()
+            self._notify_buffer_ready(request, sequence_idx)
 
     async def _yield_ordered_outputs(self, request: QueuedRequest) -> AsyncGenerator[Any, None]:
         """Yield outputs from all generators in sequence order.
