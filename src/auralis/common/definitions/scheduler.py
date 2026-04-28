@@ -30,6 +30,10 @@ class QueuedRequest:
     first_fn: Callable = None
     second_fn: Callable = None
     sequence_buffers: Dict[int, Deque[Any]] = field(default_factory=lambda: defaultdict(deque))
+    # Per-sequence events that are set whenever a new item is written to the
+    # corresponding buffer.  This allows _yield_ordered_outputs to await
+    # instead of busy-polling with asyncio.sleep.
+    buffer_ready_events: Dict[int, asyncio.Event] = field(default_factory=dict)
     next_sequence_to_yield: int = 0
     start_time: float = field(default_factory=time.time)
     first_phase_duration: float = 0.0

@@ -89,11 +89,19 @@ class Attend(nn.Module):
 
         device_properties = torch.cuda.get_device_properties(torch.device("cuda"))
 
-        if device_properties.major == 8 and device_properties.minor == 0:
-            print_once("A100 GPU detected, using flash attention if input tensor is on cuda")
+        if device_properties.major >= 8:
+            # All Ampere (SM 8.0+) and newer GPUs (A100, A30, A10, A40, RTX 30xx/40xx series)
+            # support the hardware flash-attention kernel efficiently.
+            print_once(
+                f"Ampere or newer GPU detected (SM {device_properties.major}.{device_properties.minor}), "
+                "using flash attention if input tensor is on cuda"
+            )
             self.cuda_config = self.config(True, False, False)
         else:
-            print_once("Non-A100 GPU detected, using math or mem efficient attention if input tensor is on cuda")
+            print_once(
+                f"Pre-Ampere GPU detected (SM {device_properties.major}.{device_properties.minor}), "
+                "using math or mem-efficient attention if input tensor is on cuda"
+            )
             self.cuda_config = self.config(False, True, True)
 
     def get_mask(self, n, device):
