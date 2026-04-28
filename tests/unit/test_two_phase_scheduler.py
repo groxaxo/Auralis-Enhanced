@@ -7,6 +7,8 @@ import types
 from collections import deque
 from pathlib import Path
 
+MAX_ERROR_PROPAGATION_TIME = 0.5
+
 
 def _load_scheduler_modules():
     root = Path(__file__).resolve().parents[2] / "src"
@@ -141,7 +143,7 @@ def test_yield_ordered_outputs_wakes_immediately_on_generator_error():
                 "Expected the waiting consumer to surface the generator error promptly"
             ) from exc
         except RuntimeError as exc:
-            assert time.perf_counter() - start < 0.5
+            assert time.perf_counter() - start < MAX_ERROR_PROPAGATION_TIME
             assert str(exc) == "boom"
         else:
             raise AssertionError("Expected the waiting consumer to raise the generator error")
