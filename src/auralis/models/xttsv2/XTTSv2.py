@@ -361,8 +361,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         # throughput on matmul and convolution operations.  PyTorch enables this
         # by default since 1.7/1.12, but we set it explicitly so user overrides
         # in the environment cannot inadvertently disable it.
-        if torch.cuda.is_available() and target_device != "cpu":
-            prop = torch.cuda.get_device_properties(torch.device("cuda"))
+        if torch.cuda.is_available() and str(target_device).startswith("cuda"):
+            prop = torch.cuda.get_device_properties(torch.device(target_device))
             if prop.major >= 8:
                 torch.backends.cuda.matmul.allow_tf32 = True
                 torch.backends.cudnn.allow_tf32 = True
