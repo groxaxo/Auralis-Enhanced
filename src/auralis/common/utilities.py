@@ -1,9 +1,43 @@
-from typing import Union, Callable, Dict, Any
+from typing import Union, Callable, Dict, Any, Tuple
 
 import fsspec
+import functools
 import torch
 import torchaudio
 import io
+
+
+# ---------------------------------------------------------------------------
+# Module-level LRU cache so we never rebuild the same MelSpectrogram transform.
+# The cache key is all transform hyper-parameters plus the target device string.
+# ---------------------------------------------------------------------------
+
+@functools.lru_cache(maxsize=16)
+def _cached_mel_transform(
+    n_fft: int,
+    hop_length: int,
+    win_length: int,
+    power: int,
+    normalized: bool,
+    sample_rate: int,
+    f_min: int,
+    f_max: int,
+    n_mels: int,
+    device_str: str,
+) -> torchaudio.transforms.MelSpectrogram:
+    """Build and return a cached MelSpectrogram transform for the given parameters."""
+    return torchaudio.transforms.MelSpectrogram(
+        n_fft=n_fft,
+        hop_length=hop_length,
+        win_length=win_length,
+        power=power,
+        normalized=normalized,
+        sample_rate=sample_rate,
+        f_min=f_min,
+        f_max=f_max,
+        n_mels=n_mels,
+        norm="slaney",
+    ).to(torch.device(device_str))
 
 
 def wav_to_mel_cloning(
@@ -50,7 +84,7 @@ def wav_to_mel_cloning(
     Returns:
         torch.Tensor: Normalized mel-spectrogram.
     """
-    mel_stft = torchaudio.transforms.MelSpectrogram(
+    mel_stft = _cached_mel_transform(
         n_fft=n_fft,
         hop_length=hop_length,
         win_length=win_length,
@@ -60,8 +94,8 @@ def wav_to_mel_cloning(
         f_min=f_min,
         f_max=f_max,
         n_mels=n_mels,
-        norm="slaney",
-    ).to(device)
+        device_str=str(device),
+    )
     wav = wav.to(device)
     mel = mel_stft(wav)
     mel = torch.log(torch.clamp(mel, min=1e-5))

@@ -175,8 +175,9 @@ class TwoPhaseScheduler:
             )
             request.first_phase_duration = time.perf_counter() - phase_start
             request.generators_count = len(request.first_phase_result.get('parallel_inputs', []))
-            # Initialize sequence_buffers here
+            # Initialize sequence_buffers and per-sequence ready events here
             request.sequence_buffers = {i: deque() for i in range(request.generators_count)}
+            request.buffer_ready_events = {i: asyncio.Event() for i in range(request.generators_count)}
             request.state = TaskState.PROCESSING_SECOND
         except asyncio.TimeoutError:
             raise TimeoutError(f"First phase timeout after {self.request_timeout}s")
@@ -259,7 +260,9 @@ class TwoPhaseScheduler:
         """Run a generator and collect its outputs.
 
         Executes the generator and stores its outputs in sequence buffers for
-        ordered collection.
+        ordered collection.  Each time a new item is appended the corresponding
+        ``buffer_ready_events`` entry is set so that ``_yield_ordered_outputs``
+        can wake up immediately rather than polling.
 
         Args:
             request (QueuedRequest): Parent request.
@@ -280,11 +283,21 @@ class TwoPhaseScheduler:
                 )
 
                 buffer.append(item)
+                # Wake the output-collection loop immediately.
+                self._notify_buffer_ready(request, sequence_idx)
             except StopAsyncIteration:
                 self.logger.debug(f"Generator {sequence_idx} completed for request {request.id}")
+                # Signal in case the consumer is waiting and there are no more items.
+                self._notify_buffer_ready(request, sequence_idx)
                 break
             except asyncio.TimeoutError:
                 raise TimeoutError(f"Generator {sequence_idx} timed out")
+
+    def _notify_buffer_ready(self, request: QueuedRequest, sequence_idx: int):
+        """Wake any consumer waiting on a sequence buffer state change."""
+        ready_event = request.buffer_ready_events.get(sequence_idx)
+        if ready_event is not None:
+            ready_event.set()
 
     def _handle_generator_error(self, request: QueuedRequest, sequence_idx: int, error: Exception):
         """Handle errors from a generator.
@@ -299,6 +312,7 @@ class TwoPhaseScheduler:
         self.logger.error(f"Generator {sequence_idx} failed for request {request.id}: {error}")
         if request.error is None:
             request.error = error
+        self._notify_buffer_ready(request, sequence_idx)
 
     async def _cleanup_generator(self, request: QueuedRequest, sequence_idx: int):
         """Clean up resources after a generator completes.
@@ -314,12 +328,17 @@ class TwoPhaseScheduler:
             request.completed_generators += 1
             if sequence_idx in request.generator_events:
                 request.generator_events[sequence_idx].set()
+            # Wake any waiter even on cancellation / early-exit paths that do not
+            # flow through the normal item or error notifications.
+            self._notify_buffer_ready(request, sequence_idx)
 
     async def _yield_ordered_outputs(self, request: QueuedRequest) -> AsyncGenerator[Any, None]:
         """Yield outputs from all generators in sequence order.
 
         Collects outputs from multiple generators and yields them in the correct
-        sequence order, handling timeouts and errors.
+        sequence order.  Instead of busy-polling with ``asyncio.sleep``, the loop
+        awaits the per-sequence ``buffer_ready_events`` entry so the coroutine
+        yields control to the event loop only when there is actual work to do.
 
         Args:
             request (QueuedRequest): Request to yield outputs from.
@@ -333,6 +352,7 @@ class TwoPhaseScheduler:
         """
         current_index = 0
         last_progress = time.time()
+        wait_timeout = self.request_timeout or 30.0
 
         while not self._is_processing_complete(request):
             if self._check_timeout(last_progress):
@@ -346,19 +366,32 @@ class TwoPhaseScheduler:
                 if buffer:
                     item = buffer[0]
                     try:
-                        try:
-                            yield item
-                        finally:
-                            buffer.popleft()
-                        last_progress = time.time()
-                    except asyncio.TimeoutError:
-                        raise TimeoutError(f"Timeout waiting for item in sequence {current_index}")
-
-
+                        yield item
+                    finally:
+                        buffer.popleft()
+                    last_progress = time.time()
                     current_index += 1
+                    continue
 
+                # Buffer is empty – wait for the generator to signal readiness.
+                ready_event = request.buffer_ready_events.get(current_index)
+                if ready_event is not None:
+                    try:
+                        await asyncio.wait_for(
+                            ready_event.wait(),
+                            timeout=wait_timeout,
+                        )
+                    except asyncio.TimeoutError:
+                        if self._check_timeout(last_progress):
+                            raise TimeoutError("No progress in output generation")
+                    finally:
+                        # Always clear so we can wait again if the buffer is still
+                        # empty (e.g. generator signalled completion without data).
+                        ready_event.clear()
+                    continue
 
-            await asyncio.sleep(0.01)
+            # Fallback: give the event loop a chance to run other coroutines.
+            await asyncio.sleep(0)
 
     def _is_processing_complete(self, request: QueuedRequest) -> bool:
         """Check if request processing is complete.

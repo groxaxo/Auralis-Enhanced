@@ -119,15 +119,29 @@ class QKVAttention(nn.Module):
         assert width % (3 * self.n_heads) == 0
         ch = width // (3 * self.n_heads)
         q, k, v = qkv.reshape(bs * self.n_heads, ch * 3, length).split(ch, dim=1)
-        scale = 1 / math.sqrt(math.sqrt(ch))
-        weight = torch.einsum("bct,bcs->bts", q * scale, k * scale)  # More stable with f16 than dividing afterwards
-        weight = weight + qk_bias
-        if mask is not None:
-            mask = mask.repeat(self.n_heads, 1, 1)
-            weight[mask.logical_not()] = -torch.inf
-        weight = torch.softmax(weight.float(), dim=-1).type(weight.dtype)
-        a = torch.einsum("bts,bcs->bct", weight, v)
 
+        # Reshape to [batch*heads, seq_len, head_dim] for scaled_dot_product_attention
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+
+        if qk_bias == 0 and mask is None:
+            # Fast path: use hardware-accelerated SDPA (flash attention on Ampere+)
+            a = F.scaled_dot_product_attention(q, k, v)
+        else:
+            # Slow path: manual computation required when additive bias or custom mask is present
+            scale = 1 / math.sqrt(math.sqrt(ch))
+            # [bs*heads, length, length]
+            weight = torch.einsum("btc,bsc->bts", q * scale, k * scale)
+            weight = weight + qk_bias
+            if mask is not None:
+                mask = mask.repeat(self.n_heads, 1, 1)
+                weight[mask.logical_not()] = -torch.inf
+            weight = torch.softmax(weight.float(), dim=-1).type(weight.dtype)
+            a = torch.einsum("bts,bsc->btc", weight, v)
+
+        # Restore to [bs*heads, head_dim, length]
+        a = a.transpose(1, 2)
         return a.reshape(bs, -1, length)
 
 

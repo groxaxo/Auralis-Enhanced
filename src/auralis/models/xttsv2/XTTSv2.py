@@ -138,7 +138,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             dim_head=64,
             heads=8,
             ff_mult=4,
-            use_flash_attn=False,
+            use_flash_attn=not self.is_cpu,
         )
 
         # Initialize HiFi-GAN decoder
@@ -357,6 +357,16 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         model = model.to(torch_dtype)
         model = model.to(target_device)
 
+        # On Ampere and newer GPUs (SM >= 8.0) explicitly allow TF32 to maximise
+        # throughput on matmul and convolution operations.  PyTorch enables this
+        # by default since 1.7/1.12, but we set it explicitly so user overrides
+        # in the environment cannot inadvertently disable it.
+        if torch.cuda.is_available() and str(target_device).startswith("cuda"):
+            prop = torch.cuda.get_device_properties(torch.device(target_device))
+            if prop.major >= 8:
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+
         return model
 
     async def _get_speaker_embedding(self, audio, sr):
@@ -536,14 +546,15 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
     async def cuda_memory_manager(self):
         """Context manager for CUDA memory management.
 
-        Ensures proper allocation and deallocation of CUDA memory during processing.
+        Releases cached CUDA memory after each decoder call to avoid fragmentation.
+        ``torch.cuda.synchronize()`` and ``asyncio.sleep`` are intentionally omitted:
+        the decoder runs inside ``asyncio.to_thread`` which already waits for the
+        thread (and all GPU work launched within it) to complete before returning.
         """
         try:
             yield
         finally:
             if torch.cuda.is_available():
-                torch.cuda.synchronize()
-                await asyncio.sleep(0.1)
                 torch.cuda.empty_cache()
 
     def get_style_emb(
