@@ -2,6 +2,7 @@ import asyncio
 import importlib.util
 import logging
 import sys
+import time
 import types
 from collections import deque
 from pathlib import Path
@@ -102,5 +103,49 @@ def test_process_request_tracks_phase_durations():
         assert request.total_duration >= 0
         assert request.total_duration >= request.first_phase_duration
         assert request.total_duration >= request.second_phase_duration
+
+    asyncio.run(_run())
+
+
+def test_yield_ordered_outputs_wakes_immediately_on_generator_error():
+    async def _run():
+        definitions_module, scheduler_module = _load_scheduler_modules()
+        scheduler = scheduler_module.TwoPhaseScheduler(request_timeout=5)
+        try:
+            async def _first_fn(_):
+                return {"parallel_inputs": [None]}
+
+            class _FailingGenerator:
+                def __aiter__(self):
+                    return self
+
+                async def __anext__(self):
+                    raise RuntimeError("boom")
+
+            def _second_fn(_):
+                return _FailingGenerator()
+
+            async def _consume():
+                async for _ in scheduler.run(
+                    inputs=None,
+                    request_id="req-4",
+                    first_phase_fn=_first_fn,
+                    second_phase_fn=_second_fn,
+                ):
+                    pass
+
+            start = time.perf_counter()
+            await asyncio.wait_for(_consume(), timeout=1.0)
+        except asyncio.TimeoutError as exc:
+            raise AssertionError(
+                "Expected the waiting consumer to surface the generator error promptly"
+            ) from exc
+        except RuntimeError as exc:
+            assert time.perf_counter() - start < 0.5
+            assert str(exc) == "boom"
+        else:
+            raise AssertionError("Expected the waiting consumer to raise the generator error")
+        finally:
+            await scheduler.shutdown()
 
     asyncio.run(_run())
