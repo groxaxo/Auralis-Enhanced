@@ -328,6 +328,8 @@ class TwoPhaseScheduler:
             request.completed_generators += 1
             if sequence_idx in request.generator_events:
                 request.generator_events[sequence_idx].set()
+            # Wake any waiter even on cancellation / early-exit paths that do not
+            # flow through the normal item or error notifications.
             self._notify_buffer_ready(request, sequence_idx)
 
     async def _yield_ordered_outputs(self, request: QueuedRequest) -> AsyncGenerator[Any, None]:
