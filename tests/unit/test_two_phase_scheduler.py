@@ -2,6 +2,7 @@ import asyncio
 import importlib.util
 import logging
 import sys
+import time
 import types
 from collections import deque
 from pathlib import Path
@@ -133,8 +134,10 @@ def test_yield_ordered_outputs_wakes_immediately_on_generator_error():
                 ):
                     pass
 
+            start = time.perf_counter()
             await asyncio.wait_for(_consume(), timeout=0.2)
         except RuntimeError as exc:
+            assert time.perf_counter() - start < 0.1
             assert str(exc) == "boom"
         else:
             raise AssertionError("Expected the waiting consumer to raise the generator error")
