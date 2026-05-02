@@ -374,10 +374,11 @@ class TwoPhaseScheduler:
                     last_progress = time.time()
                     continue
 
-                if self._can_advance_sequence(request, current_index) or request.state in (
-                    TaskState.COMPLETED,
-                    TaskState.FAILED,
-                ):
+                if self._can_advance_sequence(request, current_index):
+                    current_index += 1
+                    continue
+
+                if request.state in (TaskState.COMPLETED, TaskState.FAILED):
                     current_index += 1
                     continue
 
@@ -409,10 +410,14 @@ class TwoPhaseScheduler:
                         raise TimeoutError("No progress in output generation")
                 continue
 
-            await asyncio.wait_for(
-                request.completion_event.wait(),
-                timeout=wait_timeout,
-            )
+            try:
+                await asyncio.wait_for(
+                    request.completion_event.wait(),
+                    timeout=wait_timeout,
+                )
+            except asyncio.TimeoutError:
+                if self._check_timeout(last_progress):
+                    raise TimeoutError("No progress in output generation")
 
     def _is_processing_complete(self, request: QueuedRequest) -> bool:
         """Check if request processing is complete.
