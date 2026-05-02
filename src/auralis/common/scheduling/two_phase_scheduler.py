@@ -181,6 +181,8 @@ class TwoPhaseScheduler:
             request.state = TaskState.PROCESSING_SECOND
         except asyncio.TimeoutError:
             raise TimeoutError(f"First phase timeout after {self.request_timeout}s")
+        finally:
+            request.first_phase_event.set()
 
     async def _handle_second_phase(self, request: QueuedRequest):
         """Execute the second phase of request processing.
@@ -370,6 +372,12 @@ class TwoPhaseScheduler:
                     finally:
                         buffer.popleft()
                     last_progress = time.time()
+                    continue
+
+                if self._can_advance_sequence(request, current_index) or request.state in (
+                    TaskState.COMPLETED,
+                    TaskState.FAILED,
+                ):
                     current_index += 1
                     continue
 
@@ -390,8 +398,21 @@ class TwoPhaseScheduler:
                         ready_event.clear()
                     continue
 
-            # Fallback: give the event loop a chance to run other coroutines.
-            await asyncio.sleep(0)
+            if not request.first_phase_event.is_set():
+                try:
+                    await asyncio.wait_for(
+                        request.first_phase_event.wait(),
+                        timeout=wait_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    if self._check_timeout(last_progress):
+                        raise TimeoutError("No progress in output generation")
+                continue
+
+            await asyncio.wait_for(
+                request.completion_event.wait(),
+                timeout=wait_timeout,
+            )
 
     def _is_processing_complete(self, request: QueuedRequest) -> bool:
         """Check if request processing is complete.

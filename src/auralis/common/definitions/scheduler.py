@@ -34,6 +34,7 @@ class QueuedRequest:
     # corresponding buffer.  This allows _yield_ordered_outputs to await
     # instead of busy-polling with asyncio.sleep.
     buffer_ready_events: Dict[int, asyncio.Event] = field(default_factory=dict)
+    first_phase_event: asyncio.Event = field(default_factory=asyncio.Event)
     next_sequence_to_yield: int = 0
     start_time: float = field(default_factory=time.time)
     first_phase_duration: float = 0.0

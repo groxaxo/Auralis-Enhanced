@@ -78,6 +78,51 @@ def test_yield_ordered_outputs_reads_raw_items():
     asyncio.run(_run())
 
 
+def test_yield_ordered_outputs_drains_each_sequence_before_advancing():
+    async def _run():
+        definitions_module, scheduler_module = _load_scheduler_modules()
+        scheduler = scheduler_module.TwoPhaseScheduler()
+        request = definitions_module.QueuedRequest(id="req-multi", input=None, second_fn=None)
+        request.sequence_buffers = {0: deque(["a1", "a2"]), 1: deque(["b1"])}
+        request.generators_count = 2
+        request.completed_generators = 2
+        request.state = definitions_module.TaskState.COMPLETED
+
+        yielded = []
+        async for item in scheduler._yield_ordered_outputs(request):
+            yielded.append(item)
+
+        assert yielded == ["a1", "a2", "b1"]
+
+    asyncio.run(_run())
+
+
+def test_yield_ordered_outputs_waits_for_first_phase_without_busy_polling():
+    async def _run():
+        definitions_module, scheduler_module = _load_scheduler_modules()
+        scheduler = scheduler_module.TwoPhaseScheduler(request_timeout=1)
+        request = definitions_module.QueuedRequest(id="req-wait", input=None, second_fn=None)
+        request.generators_count = 1
+
+        async def _mark_first_phase_ready():
+            await asyncio.sleep(0.01)
+            request.sequence_buffers = {0: deque(["chunk"])}
+            request.buffer_ready_events = {0: asyncio.Event()}
+            request.completed_generators = 1
+            request.state = definitions_module.TaskState.COMPLETED
+            request.first_phase_event.set()
+
+        task = asyncio.create_task(_mark_first_phase_ready())
+        yielded = []
+        async for item in scheduler._yield_ordered_outputs(request):
+            yielded.append(item)
+        await task
+
+        assert yielded == ["chunk"]
+
+    asyncio.run(_run())
+
+
 def test_process_request_tracks_phase_durations():
     async def _run():
         definitions_module, scheduler_module = _load_scheduler_modules()
