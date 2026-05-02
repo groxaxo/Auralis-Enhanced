@@ -372,26 +372,23 @@ class TwoPhaseScheduler:
                     finally:
                         buffer.popleft()
                     last_progress = time.time()
-                    continue
-
-                if self._can_advance_current_sequence(request, current_index):
+                elif self._can_advance_current_sequence(request, current_index):
                     current_index += 1
-                    continue
-
-                # Buffer is empty – wait for the generator to signal readiness.
-                ready_event = request.buffer_ready_events.get(current_index)
-                if ready_event is not None:
-                    try:
-                        await self._wait_for_progress_signal(
-                            ready_event,
-                            last_progress,
-                            wait_timeout,
-                        )
-                    finally:
-                        # Always clear so we can wait again if the buffer is still
-                        # empty (e.g. generator signalled completion without data).
-                        ready_event.clear()
-                    continue
+                else:
+                    # Buffer is empty – wait for the generator to signal readiness.
+                    ready_event = request.buffer_ready_events.get(current_index)
+                    if ready_event is not None:
+                        try:
+                            await self._wait_for_progress_signal(
+                                ready_event,
+                                last_progress,
+                                wait_timeout,
+                            )
+                        finally:
+                            # Always clear so we can wait again if the buffer is still
+                            # empty (e.g. generator signalled completion without data).
+                            ready_event.clear()
+                continue
 
             if not request.first_phase_event.is_set():
                 await self._wait_for_progress_signal(

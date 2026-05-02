@@ -8,6 +8,9 @@ from collections import deque
 from pathlib import Path
 
 
+MAX_EXPECTED_FIRST_PHASE_WAIT = 0.5
+
+
 def _load_scheduler_modules():
     root = Path(__file__).resolve().parents[2] / "src"
     sys.modules.setdefault("auralis", types.ModuleType("auralis"))
@@ -121,7 +124,7 @@ def test_yield_ordered_outputs_waits_for_first_phase_without_busy_polling():
         await task
 
         assert yielded == ["chunk"]
-        assert time.perf_counter() - start < 0.5
+        assert time.perf_counter() - start < MAX_EXPECTED_FIRST_PHASE_WAIT
 
     asyncio.run(_run())
 
