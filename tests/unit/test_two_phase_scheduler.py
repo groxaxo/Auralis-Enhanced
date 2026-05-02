@@ -114,11 +114,13 @@ def test_yield_ordered_outputs_waits_for_first_phase_without_busy_polling():
 
         task = asyncio.create_task(_mark_first_phase_ready())
         yielded = []
+        start = time.perf_counter()
         async for item in scheduler._yield_ordered_outputs(request):
             yielded.append(item)
         await task
 
         assert yielded == ["chunk"]
+        assert time.perf_counter() - start < 0.5
 
     asyncio.run(_run())
 

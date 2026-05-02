@@ -374,11 +374,9 @@ class TwoPhaseScheduler:
                     last_progress = time.time()
                     continue
 
-                if self._can_advance_sequence(request, current_index):
-                    current_index += 1
-                    continue
-
-                if request.state in (TaskState.COMPLETED, TaskState.FAILED):
+                sequence_finished = self._can_advance_sequence(request, current_index)
+                request_terminal = request.state in (TaskState.COMPLETED, TaskState.FAILED)
+                if sequence_finished or request_terminal:
                     current_index += 1
                     continue
 
