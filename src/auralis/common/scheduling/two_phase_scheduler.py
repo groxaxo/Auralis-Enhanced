@@ -374,9 +374,7 @@ class TwoPhaseScheduler:
                     last_progress = time.time()
                     continue
 
-                sequence_finished = self._can_advance_sequence(request, current_index)
-                request_terminal = request.state in (TaskState.COMPLETED, TaskState.FAILED)
-                if sequence_finished or request_terminal:
+                if self._can_advance_current_sequence(request, current_index):
                     current_index += 1
                     continue
 
@@ -384,13 +382,11 @@ class TwoPhaseScheduler:
                 ready_event = request.buffer_ready_events.get(current_index)
                 if ready_event is not None:
                     try:
-                        await asyncio.wait_for(
-                            ready_event.wait(),
-                            timeout=wait_timeout,
+                        await self._wait_for_progress_signal(
+                            ready_event,
+                            last_progress,
+                            wait_timeout,
                         )
-                    except asyncio.TimeoutError:
-                        if self._check_timeout(last_progress):
-                            raise TimeoutError("No progress in output generation")
                     finally:
                         # Always clear so we can wait again if the buffer is still
                         # empty (e.g. generator signalled completion without data).
@@ -398,24 +394,18 @@ class TwoPhaseScheduler:
                     continue
 
             if not request.first_phase_event.is_set():
-                try:
-                    await asyncio.wait_for(
-                        request.first_phase_event.wait(),
-                        timeout=wait_timeout,
-                    )
-                except asyncio.TimeoutError:
-                    if self._check_timeout(last_progress):
-                        raise TimeoutError("No progress in output generation")
+                await self._wait_for_progress_signal(
+                    request.first_phase_event,
+                    last_progress,
+                    wait_timeout,
+                )
                 continue
 
-            try:
-                await asyncio.wait_for(
-                    request.completion_event.wait(),
-                    timeout=wait_timeout,
-                )
-            except asyncio.TimeoutError:
-                if self._check_timeout(last_progress):
-                    raise TimeoutError("No progress in output generation")
+            await self._wait_for_progress_signal(
+                request.completion_event,
+                last_progress,
+                wait_timeout,
+            )
 
     def _is_processing_complete(self, request: QueuedRequest) -> bool:
         """Check if request processing is complete.
@@ -441,6 +431,22 @@ class TwoPhaseScheduler:
         """
         return self.request_timeout and time.time() - last_progress > self.request_timeout
 
+    async def _wait_for_progress_signal(
+            self,
+            event: asyncio.Event,
+            last_progress: float,
+            wait_timeout: float,
+    ):
+        """Wait for a scheduler progress event without busy-polling."""
+        try:
+            await asyncio.wait_for(
+                event.wait(),
+                timeout=wait_timeout,
+            )
+        except asyncio.TimeoutError:
+            if self._check_timeout(last_progress):
+                raise TimeoutError("No progress in output generation")
+
     def _can_advance_sequence(self, request: QueuedRequest, current_index: int) -> bool:
         """Check if sequence can advance to next index.
 
@@ -454,6 +460,13 @@ class TwoPhaseScheduler:
         return (hasattr(request, 'generator_events') and
                 current_index in request.generator_events and
                 request.generator_events[current_index].is_set())
+
+    def _can_advance_current_sequence(self, request: QueuedRequest, current_index: int) -> bool:
+        """Check whether the current sequence is done and output can advance."""
+        return (
+            self._can_advance_sequence(request, current_index)
+            or request.state in (TaskState.COMPLETED, TaskState.FAILED)
+        )
 
     async def run(
             self,

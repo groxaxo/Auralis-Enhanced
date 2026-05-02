@@ -108,6 +108,7 @@ def test_yield_ordered_outputs_waits_for_first_phase_without_busy_polling():
             await asyncio.sleep(0.01)
             request.sequence_buffers = {0: deque(["chunk"])}
             request.buffer_ready_events = {0: asyncio.Event()}
+            request.buffer_ready_events[0].set()
             request.completed_generators = 1
             request.state = definitions_module.TaskState.COMPLETED
             request.first_phase_event.set()
