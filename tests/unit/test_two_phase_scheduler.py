@@ -8,7 +8,7 @@ from collections import deque
 from pathlib import Path
 
 
-MAX_EXPECTED_FIRST_PHASE_WAIT = 0.5
+MAX_EXPECTED_FIRST_PHASE_WAIT = 0.05
 
 
 def _load_scheduler_modules():

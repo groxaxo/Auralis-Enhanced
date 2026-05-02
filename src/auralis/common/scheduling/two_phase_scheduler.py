@@ -374,6 +374,7 @@ class TwoPhaseScheduler:
                     last_progress = time.time()
                 elif self._can_advance_current_sequence(request, current_index):
                     current_index += 1
+                    continue
                 else:
                     # Buffer is empty – wait for the generator to signal readiness.
                     ready_event = request.buffer_ready_events.get(current_index)
