@@ -83,7 +83,9 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
         self.gpt_model = kwargs.pop("gpt_model")
         self.device_map = kwargs.pop("device_map", "auto")
-        self.gpu_memory_utilization = kwargs.pop("gpu_memory_utilization", 0.35)
+        # Increased from 0.35 to 0.5 for better GPU utilization on modern GPUs
+        # This allows more concurrent requests while still leaving headroom for decoder
+        self.gpu_memory_utilization = kwargs.pop("gpu_memory_utilization", 0.5)
         self.cpu_offload_gb = kwargs.pop("cpu_offload_gb", 8.0)
         self.swap_space = kwargs.pop("swap_space", 2.0)
         self.hifi_config = hifi_config
@@ -130,6 +132,13 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             )
         )
 
+        # Enable flash attention for all Ampere+ GPUs (SM >= 8.0) to maximize performance
+        use_flash_attn = not self.is_cpu
+        if not self.is_cpu and torch.cuda.is_available():
+            device_properties = torch.cuda.get_device_properties(torch.device("cuda"))
+            # Flash attention provides significant speedup on Ampere and newer architectures
+            use_flash_attn = device_properties.major >= 8
+
         self.conditioning_perceiver = PerceiverResampler(
             dim=gpt_config.hidden_size,
             depth=2,
@@ -138,7 +147,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             dim_head=64,
             heads=8,
             ff_mult=4,
-            use_flash_attn=not self.is_cpu,
+            use_flash_attn=use_flash_attn,
         )
 
         # Initialize HiFi-GAN decoder
@@ -170,6 +179,12 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.decoder_semaphore = asyncio.BoundedSemaphore(
             semaphore_concurrency
         )  # empirically found a good value
+
+        # Cache for speaker conditioning to avoid recomputation
+        # Key: tuple of audio file paths, Value: (gpt_cond_latents, speaker_embeddings)
+        self._conditioning_cache = {}
+        self._max_cache_size = 100  # Limit cache size to prevent memory issues
+
         self.eval()
 
     def get_memory_usage_curve(self):
@@ -550,12 +565,23 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         ``torch.cuda.synchronize()`` and ``asyncio.sleep`` are intentionally omitted:
         the decoder runs inside ``asyncio.to_thread`` which already waits for the
         thread (and all GPU work launched within it) to complete before returning.
+
+        Memory cleanup is performed periodically rather than on every call to reduce
+        overhead while still preventing fragmentation during sustained load.
         """
         try:
             yield
         finally:
             if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+                # Only clear cache periodically to reduce overhead
+                # Check if we should clear based on simple counter
+                if not hasattr(self, '_decode_counter'):
+                    self._decode_counter = 0
+                self._decode_counter += 1
+
+                # Clear cache every 10 decoder calls to balance fragmentation vs overhead
+                if self._decode_counter % 10 == 0:
+                    torch.cuda.empty_cache()
 
     def get_style_emb(
         self, cond_input: torch.Tensor, return_latent: Optional[bool] = False
@@ -697,8 +723,25 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         Returns:
             Tuple: GPT conditioning latents and speaker embeddings.
         """
-        """Async version of get_conditioning_latents with concurrency control."""
+        """Async version of get_conditioning_latents with concurrency control and caching."""
+        # Create cache key from audio reference paths and parameters
+        if isinstance(audio_reference, list):
+            cache_key = (tuple(sorted(audio_reference)), max_ref_length, gpt_cond_len,
+                        gpt_cond_chunk_len, librosa_trim_db, sound_norm_refs, load_sr)
+        else:
+            cache_key = ((audio_reference,), max_ref_length, gpt_cond_len,
+                        gpt_cond_chunk_len, librosa_trim_db, sound_norm_refs, load_sr)
+
+        # Check cache
+        if cache_key in self._conditioning_cache:
+            self.logger.debug(f"Using cached conditioning for audio reference")
+            return self._conditioning_cache[cache_key]
+
         async with self.encoder_semaphore:
+            # Double-check cache after acquiring semaphore (another coroutine might have populated it)
+            if cache_key in self._conditioning_cache:
+                return self._conditioning_cache[cache_key]
+
             # Run the original get_conditioning_latents in executor
             result = await self.get_conditioning_latents(
                 audio_reference,
@@ -709,6 +752,14 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 sound_norm_refs,
                 load_sr,
             )
+
+            # Store in cache with LRU-like eviction
+            if len(self._conditioning_cache) >= self._max_cache_size:
+                # Remove oldest entry (first key)
+                oldest_key = next(iter(self._conditioning_cache))
+                del self._conditioning_cache[oldest_key]
+
+            self._conditioning_cache[cache_key] = result
             return result
 
     async def get_model_logits(
