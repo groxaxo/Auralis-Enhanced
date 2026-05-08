@@ -8,6 +8,9 @@ from collections import deque
 from pathlib import Path
 
 
+MAX_EXPECTED_FIRST_PHASE_WAIT = 0.5
+
+
 def _load_scheduler_modules():
     root = Path(__file__).resolve().parents[2] / "src"
     sys.modules.setdefault("auralis", types.ModuleType("auralis"))
@@ -74,6 +77,54 @@ def test_yield_ordered_outputs_reads_raw_items():
             yielded.append(item)
 
         assert yielded == ["a", "b"]
+
+    asyncio.run(_run())
+
+
+def test_yield_ordered_outputs_drains_each_sequence_before_advancing():
+    async def _run():
+        definitions_module, scheduler_module = _load_scheduler_modules()
+        scheduler = scheduler_module.TwoPhaseScheduler()
+        request = definitions_module.QueuedRequest(id="req-multi", input=None, second_fn=None)
+        request.sequence_buffers = {0: deque(["a1", "a2"]), 1: deque(["b1"])}
+        request.generators_count = 2
+        request.completed_generators = 2
+        request.state = definitions_module.TaskState.COMPLETED
+
+        yielded = []
+        async for item in scheduler._yield_ordered_outputs(request):
+            yielded.append(item)
+
+        assert yielded == ["a1", "a2", "b1"]
+
+    asyncio.run(_run())
+
+
+def test_yield_ordered_outputs_waits_for_first_phase_without_busy_polling():
+    async def _run():
+        definitions_module, scheduler_module = _load_scheduler_modules()
+        scheduler = scheduler_module.TwoPhaseScheduler(request_timeout=1)
+        request = definitions_module.QueuedRequest(id="req-wait", input=None, second_fn=None)
+        request.generators_count = 1
+
+        async def _mark_first_phase_ready():
+            await asyncio.sleep(0.01)
+            request.sequence_buffers = {0: deque(["chunk"])}
+            request.buffer_ready_events = {0: asyncio.Event()}
+            request.buffer_ready_events[0].set()
+            request.completed_generators = 1
+            request.state = definitions_module.TaskState.COMPLETED
+            request.first_phase_event.set()
+
+        task = asyncio.create_task(_mark_first_phase_ready())
+        yielded = []
+        start = time.perf_counter()
+        async for item in scheduler._yield_ordered_outputs(request):
+            yielded.append(item)
+        await task
+
+        assert yielded == ["chunk"]
+        assert time.perf_counter() - start < MAX_EXPECTED_FIRST_PHASE_WAIT
 
     asyncio.run(_run())
 
