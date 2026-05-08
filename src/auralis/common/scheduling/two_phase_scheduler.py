@@ -438,7 +438,7 @@ class TwoPhaseScheduler:
         """Wait for a scheduler progress event without busy-polling.
 
         Raises:
-            TimeoutError: If no progress has been made within request_timeout.
+            TimeoutError: If no progress has been made within wait_timeout.
         """
         try:
             await asyncio.wait_for(
