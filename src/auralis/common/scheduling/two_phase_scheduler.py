@@ -434,8 +434,12 @@ class TwoPhaseScheduler:
             event: asyncio.Event,
             last_progress: float,
             wait_timeout: float,
-    ):
-        """Wait for a scheduler progress event without busy-polling."""
+    ) -> None:
+        """Wait for a scheduler progress event without busy-polling.
+
+        Raises:
+            TimeoutError: If no progress has been made within request_timeout.
+        """
         try:
             await asyncio.wait_for(
                 event.wait(),
