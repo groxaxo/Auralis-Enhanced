@@ -101,7 +101,8 @@ class TwoPhaseScheduler:
                 break
             except Exception as e:
                 self.logger.error(f"Queue processing error: {e}")
-                await asyncio.sleep(1)
+                # Use shorter sleep to allow faster recovery
+                await asyncio.sleep(0.1)
 
     @asynccontextmanager
     async def _request_lifecycle(self, request_id: str):
@@ -354,7 +355,8 @@ class TwoPhaseScheduler:
         """
         current_index = 0
         last_progress = time.time()
-        wait_timeout = self.request_timeout or 30.0
+        # Use shorter default timeout (5s) to avoid long stalls; still respect request_timeout if set
+        wait_timeout = self.request_timeout if self.request_timeout is not None else 5.0
 
         while not self._is_processing_complete(request):
             if self._check_timeout(last_progress):
