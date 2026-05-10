@@ -2,12 +2,12 @@ import ast
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _parse_xtts_module() -> ast.Module:
     return ast.parse(
-        (ROOT / "src/auralis/models/xttsv2/XTTSv2.py").read_text(encoding="utf-8")
+        (_ROOT / "src/auralis/models/xttsv2/XTTSv2.py").read_text(encoding="utf-8")
     )
 
 

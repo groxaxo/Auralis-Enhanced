@@ -72,7 +72,9 @@ class TwoPhaseScheduler:
 
     async def _handle_queue_processing_error(self, error: Exception):
         self.queue_error_streak += 1
-        exponent = min(self.queue_error_streak - 1, MAX_QUEUE_ERROR_BACKOFF_EXPONENT)
+        exponent = min(
+            max(0, self.queue_error_streak - 1), MAX_QUEUE_ERROR_BACKOFF_EXPONENT
+        )
         backoff = min(
             MAX_QUEUE_ERROR_BACKOFF_SECONDS,
             INITIAL_QUEUE_ERROR_BACKOFF_SECONDS
