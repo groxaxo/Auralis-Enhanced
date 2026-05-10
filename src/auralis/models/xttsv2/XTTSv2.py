@@ -572,7 +572,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                     self._speaker_embedding_cache.popitem(last=False)
 
         # Merge all the audios and compute the latents for the GPT
-        full_audio = torch.cat(audios, dim=-1)
+        full_audio = torch.cat(audios, dim=-1).to(self.device)
         gpt_cond_latents = await asyncio.to_thread(
             self.get_gpt_cond_latents,
             full_audio,

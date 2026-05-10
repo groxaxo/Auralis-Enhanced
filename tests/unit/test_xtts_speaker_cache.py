@@ -81,3 +81,18 @@ def test_speaker_cache_stores_audio_on_cpu():
     ]
 
     assert "audio.detach().cpu()" in cpu_audio_values
+
+
+def test_conditioning_audio_is_moved_to_device_after_concat():
+    module = _parse_xtts_module()
+    method = _get_class_method(module, "XTTSv2Engine", "get_conditioning_latents")
+
+    full_audio_assignments = [
+        ast.unparse(node.value)
+        for node in ast.walk(method)
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if ast.unparse(target) == "full_audio"
+    ]
+
+    assert "torch.cat(audios, dim=-1).to(self.device)" in full_audio_assignments
