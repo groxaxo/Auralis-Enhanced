@@ -188,7 +188,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
     def clear_speaker_embedding_cache(self):
         """Clear the speaker embedding cache to free memory.
 
-        This method removes all cached speaker embeddings and their associated
+        This method removes all cached speaker embeddings and the associated
         CPU audio tensors, freeing up cache memory. Useful for long-running services
         or when switching between different sets of speaker voices.
         """

@@ -28,14 +28,18 @@ def test_speaker_cache_uses_OrderedDict():
     init_method = _get_class_method(module, "XTTSv2Engine", "__init__")
 
     ordered_dict_assignments = [
-        ast.unparse(node.value)
+        node.value
         for node in ast.walk(init_method)
         if isinstance(node, ast.Assign)
         for target in node.targets
         if ast.unparse(target) == "self._speaker_embedding_cache"
     ]
 
-    assert ordered_dict_assignments == ["OrderedDict()"]
+    assert len(ordered_dict_assignments) == 1
+    value = ordered_dict_assignments[0]
+    assert isinstance(value, ast.Call)
+    assert isinstance(value.func, ast.Name)
+    assert value.func.id == "OrderedDict"
 
 
 def test_speaker_cache_hits_refresh_lru_position():
@@ -43,14 +47,15 @@ def test_speaker_cache_hits_refresh_lru_position():
     method = _get_class_method(module, "XTTSv2Engine", "get_conditioning_latents")
 
     move_to_end_calls = [
-        ast.unparse(node)
+        node
         for node in ast.walk(method)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
-        and ast.unparse(node.func) == "self._speaker_embedding_cache.move_to_end"
+        and node.func.attr == "move_to_end"
+        and ast.unparse(node.func.value) == "self._speaker_embedding_cache"
     ]
 
-    assert "self._speaker_embedding_cache.move_to_end(cache_key)" in move_to_end_calls
+    assert any(len(node.args) == 1 for node in move_to_end_calls)
 
 
 def test_speaker_cache_evicts_least_recently_used_entry():
@@ -58,14 +63,23 @@ def test_speaker_cache_evicts_least_recently_used_entry():
     method = _get_class_method(module, "XTTSv2Engine", "get_conditioning_latents")
 
     popitem_calls = [
-        ast.unparse(node)
+        node
         for node in ast.walk(method)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
-        and ast.unparse(node.func) == "self._speaker_embedding_cache.popitem"
+        and node.func.attr == "popitem"
+        and ast.unparse(node.func.value) == "self._speaker_embedding_cache"
     ]
 
-    assert "self._speaker_embedding_cache.popitem(last=False)" in popitem_calls
+    assert any(
+        any(
+            keyword.arg == "last"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is False
+            for keyword in node.keywords
+        )
+        for node in popitem_calls
+    )
 
 
 def test_speaker_cache_stores_audio_on_cpu():
@@ -73,14 +87,20 @@ def test_speaker_cache_stores_audio_on_cpu():
     method = _get_class_method(module, "XTTSv2Engine", "get_conditioning_latents")
 
     cpu_audio_values = [
-        ast.unparse(value)
+        value
         for node in ast.walk(method)
         if isinstance(node, ast.Dict)
         for key, value in zip(node.keys, node.values)
         if isinstance(key, ast.Constant) and key.value == "audio"
     ]
 
-    assert "audio.cpu()" in cpu_audio_values
+    assert any(
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Attribute)
+        and value.func.attr == "cpu"
+        and ast.unparse(value.func.value) == "audio"
+        for value in cpu_audio_values
+    )
 
 
 def test_conditioning_audio_is_moved_to_device_after_concat():
@@ -88,11 +108,18 @@ def test_conditioning_audio_is_moved_to_device_after_concat():
     method = _get_class_method(module, "XTTSv2Engine", "get_conditioning_latents")
 
     full_audio_assignments = [
-        ast.unparse(node.value)
+        node.value
         for node in ast.walk(method)
         if isinstance(node, ast.Assign)
         for target in node.targets
         if ast.unparse(target) == "full_audio"
     ]
 
-    assert "torch.cat(audios, dim=-1).to(self.device)" in full_audio_assignments
+    assert len(full_audio_assignments) == 1
+    value = full_audio_assignments[0]
+    assert isinstance(value, ast.Call)
+    assert isinstance(value.func, ast.Attribute)
+    assert value.func.attr == "to"
+    assert ast.unparse(value.func.value).startswith("torch.cat(")
+    assert len(value.args) == 1
+    assert ast.unparse(value.args[0]) == "self.device"

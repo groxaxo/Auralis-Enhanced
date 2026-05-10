@@ -163,7 +163,7 @@ To measure the impact of these optimizations:
 ## Memory Considerations
 
 ### Speaker Embedding Cache Memory Usage
-- **Per cache entry:** roughly the CPU audio payload for the configured `max_ref_length` plus a small speaker embedding tensor (about 2.6 MB at the default 30s / 22.05 kHz / float32 settings)
+- **Per cache entry:** roughly the CPU audio payload for the configured `max_ref_length` plus a small speaker embedding tensor (about 2.6 MB for the mono 30s / 22.05 kHz / float32 tensors produced by `load_audio()`)
 - **Default max cache size:** 100 entries (`speaker_embedding_cache_size` can be lowered or disabled with `0`)
 - **Default max memory footprint:** roughly 260 MB of CPU memory at the default settings, plus cache/container overhead
 - **Eviction policy:** LRU
