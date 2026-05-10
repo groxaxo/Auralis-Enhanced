@@ -94,7 +94,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             )
         except (TypeError, ValueError) as exc:
             raise ValueError(
-                "speaker_embedding_cache_size must be an integer greater than or equal to 0"
+                "speaker_embedding_cache_size must be convertible to an integer greater than or equal to 0"
             ) from exc
         self.hifi_config = hifi_config
         self.gpt_config = gpt_config

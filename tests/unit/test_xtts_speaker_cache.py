@@ -55,7 +55,10 @@ def test_speaker_cache_hits_refresh_lru_position():
         and ast.unparse(node.func.value) == "self._speaker_embedding_cache"
     ]
 
-    assert any(len(node.args) == 1 for node in move_to_end_calls)
+    assert any(
+        len(node.args) == 1 and ast.unparse(node.args[0]) == "cache_key"
+        for node in move_to_end_calls
+    )
 
 
 def test_speaker_cache_evicts_least_recently_used_entry():
