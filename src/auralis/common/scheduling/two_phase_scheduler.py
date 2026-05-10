@@ -7,6 +7,10 @@ from contextlib import asynccontextmanager
 from auralis.common.definitions.scheduler import QueuedRequest, TaskState
 from auralis.common.logging.logger import setup_logger
 
+INITIAL_QUEUE_ERROR_BACKOFF_SECONDS = 0.1
+MAX_QUEUE_ERROR_BACKOFF_SECONDS = 1.0
+QUEUE_ERROR_BACKOFF_MULTIPLIER = 2
+
 
 class TwoPhaseScheduler:
     """Two-phase asynchronous task scheduler with parallel processing support.
@@ -67,7 +71,11 @@ class TwoPhaseScheduler:
 
     async def _handle_queue_processing_error(self, error: Exception):
         self.queue_error_streak += 1
-        backoff = min(1.0, 0.1 * (2 ** (self.queue_error_streak - 1)))
+        backoff = min(
+            MAX_QUEUE_ERROR_BACKOFF_SECONDS,
+            INITIAL_QUEUE_ERROR_BACKOFF_SECONDS
+            * (QUEUE_ERROR_BACKOFF_MULTIPLIER ** (self.queue_error_streak - 1)),
+        )
         self.logger.exception(
             f"Queue processing error (retrying in {backoff:.1f}s): {error}"
         )

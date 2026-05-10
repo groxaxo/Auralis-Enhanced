@@ -23,7 +23,7 @@ def _get_class_method(module: ast.Module, class_name: str, method_name: str):
     raise AssertionError(f"{class_name}.{method_name} not found")
 
 
-def test_speaker_cache_uses_ordered_dict():
+def test_speaker_cache_uses_OrderedDict():
     module = _parse_xtts_module()
     init_method = _get_class_method(module, "XTTSv2Engine", "__init__")
 
