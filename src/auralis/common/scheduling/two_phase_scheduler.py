@@ -10,6 +10,7 @@ from auralis.common.logging.logger import setup_logger
 INITIAL_QUEUE_ERROR_BACKOFF_SECONDS = 0.1
 MAX_QUEUE_ERROR_BACKOFF_SECONDS = 1.0
 QUEUE_ERROR_BACKOFF_MULTIPLIER = 2
+MAX_QUEUE_ERROR_BACKOFF_EXPONENT = 3
 
 
 class TwoPhaseScheduler:
@@ -71,10 +72,11 @@ class TwoPhaseScheduler:
 
     async def _handle_queue_processing_error(self, error: Exception):
         self.queue_error_streak += 1
+        exponent = min(self.queue_error_streak - 1, MAX_QUEUE_ERROR_BACKOFF_EXPONENT)
         backoff = min(
             MAX_QUEUE_ERROR_BACKOFF_SECONDS,
             INITIAL_QUEUE_ERROR_BACKOFF_SECONDS
-            * (QUEUE_ERROR_BACKOFF_MULTIPLIER ** (self.queue_error_streak - 1)),
+            * (QUEUE_ERROR_BACKOFF_MULTIPLIER ** exponent),
         )
         self.logger.exception(
             f"Queue processing error (retrying in {backoff:.1f}s): {error}"

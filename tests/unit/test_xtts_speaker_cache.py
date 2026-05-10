@@ -35,7 +35,7 @@ def test_speaker_cache_uses_OrderedDict():
         if ast.unparse(target) == "self._speaker_embedding_cache"
     ]
 
-    assert "OrderedDict()" in ordered_dict_assignments
+    assert ordered_dict_assignments == ["OrderedDict()"]
 
 
 def test_speaker_cache_hits_refresh_lru_position():
@@ -80,7 +80,7 @@ def test_speaker_cache_stores_audio_on_cpu():
         if isinstance(key, ast.Constant) and key.value == "audio"
     ]
 
-    assert "audio.detach().cpu()" in cpu_audio_values
+    assert "audio.cpu()" in cpu_audio_values
 
 
 def test_conditioning_audio_is_moved_to_device_after_concat():

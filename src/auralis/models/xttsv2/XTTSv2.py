@@ -87,9 +87,15 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.gpu_memory_utilization = kwargs.pop("gpu_memory_utilization", 0.35)
         self.cpu_offload_gb = kwargs.pop("cpu_offload_gb", 8.0)
         self.swap_space = kwargs.pop("swap_space", 2.0)
-        self.speaker_embedding_cache_size = max(
-            0, int(kwargs.pop("speaker_embedding_cache_size", 100))
-        )
+        speaker_embedding_cache_size = kwargs.pop("speaker_embedding_cache_size", 100)
+        try:
+            self.speaker_embedding_cache_size = max(
+                0, int(speaker_embedding_cache_size)
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "speaker_embedding_cache_size must be an integer greater than or equal to 0"
+            ) from exc
         self.hifi_config = hifi_config
         self.gpt_config = gpt_config
         self.mel_bos_token_id = gpt_config.start_audio_token
@@ -565,7 +571,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             if self.speaker_embedding_cache_size > 0:
                 self._speaker_embedding_cache[cache_key] = {
                     "speaker_embedding": speaker_embedding,
-                    "audio": audio.detach().cpu(),
+                    "audio": audio.cpu(),
                 }
                 self._speaker_embedding_cache.move_to_end(cache_key)
                 if len(self._speaker_embedding_cache) > self.speaker_embedding_cache_size:
