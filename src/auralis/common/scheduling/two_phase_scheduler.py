@@ -57,12 +57,21 @@ class TwoPhaseScheduler:
         self.active_requests = {}
         self.queue_processor_tasks = []
         self.cancel_warning_issued = False
+        self.queue_error_streak = 0
 
         # Concurrency controls
         self.second_phase_sem = None
         self.active_generator_count = 0
         self.generator_count_lock = asyncio.Lock()
         self.cleanup_lock = asyncio.Lock()
+
+    async def _handle_queue_processing_error(self, error: Exception):
+        self.queue_error_streak += 1
+        backoff = min(1.0, 0.1 * (2 ** (self.queue_error_streak - 1)))
+        self.logger.exception(
+            f"Queue processing error (retrying in {backoff:.1f}s): {error}"
+        )
+        await asyncio.sleep(backoff)
 
     async def start(self):
         """Start the scheduler.
@@ -94,15 +103,14 @@ class TwoPhaseScheduler:
                     async with self._request_lifecycle(request.id):
                         self.active_requests[request.id] = request
                         await self._process_request(request)
+                self.queue_error_streak = 0
             except asyncio.CancelledError:
                 if not self.cancel_warning_issued:
                     self.logger.warning("Queue processing task cancelled")
                     self.cancel_warning_issued = True
                 break
             except Exception as e:
-                self.logger.error(f"Queue processing error: {e}")
-                # Use shorter sleep to allow faster recovery
-                await asyncio.sleep(0.1)
+                await self._handle_queue_processing_error(e)
 
     @asynccontextmanager
     async def _request_lifecycle(self, request_id: str):

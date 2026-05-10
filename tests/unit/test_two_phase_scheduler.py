@@ -158,6 +158,59 @@ def test_process_request_tracks_phase_durations():
     asyncio.run(_run())
 
 
+def test_handle_queue_processing_error_uses_exponential_backoff():
+    async def _run():
+        _, scheduler_module = _load_scheduler_modules()
+        scheduler = scheduler_module.TwoPhaseScheduler()
+        delays = []
+
+        original_sleep = scheduler_module.asyncio.sleep
+
+        async def _fake_sleep(delay):
+            delays.append(delay)
+
+        scheduler_module.asyncio.sleep = _fake_sleep
+        try:
+            await scheduler._handle_queue_processing_error(RuntimeError("boom-1"))
+            await scheduler._handle_queue_processing_error(RuntimeError("boom-2"))
+            await scheduler._handle_queue_processing_error(RuntimeError("boom-3"))
+        finally:
+            scheduler_module.asyncio.sleep = original_sleep
+
+        assert delays == [0.1, 0.2, 0.4]
+
+    asyncio.run(_run())
+
+
+def test_process_queue_resets_backoff_after_success():
+    async def _run():
+        definitions_module, scheduler_module = _load_scheduler_modules()
+        scheduler = scheduler_module.TwoPhaseScheduler()
+        scheduler.is_running = True
+        scheduler.queue_error_streak = 3
+
+        async def _process_request(_request):
+            scheduler.is_running = False
+
+        class _Queue:
+            async def get(self):
+                return definitions_module.QueuedRequest(
+                    id="req-success",
+                    input=None,
+                    second_fn=None,
+                    state=definitions_module.TaskState.QUEUED,
+                )
+
+        scheduler.request_queue = _Queue()
+        scheduler._process_request = _process_request
+
+        await scheduler._process_queue()
+
+        assert scheduler.queue_error_streak == 0
+
+    asyncio.run(_run())
+
+
 def test_yield_ordered_outputs_wakes_immediately_on_generator_error():
     async def _run():
         definitions_module, scheduler_module = _load_scheduler_modules()

@@ -29,7 +29,7 @@ This page tracks bottlenecks observed in the current inference pipeline and opti
 6. **Speaker conditioning preparation for cloning requests**
    - Location: `src/auralis/core/tts.py` (`prepare_for_streaming_generation`, `_prepare_generation_context`)
    - Impact: Added front-loaded latency when speaker embeddings and GPT-like conditioning are both enabled.
-   - **Status:** optimized with LRU caching (100 entries) to avoid redundant I/O and computation for repeated speakers.
+   - **Status:** optimized with LRU caching (100 entries by default) to avoid redundant I/O and computation for repeated speakers without pinning cached audio on GPU.
 
 7. **Cross-phase handoff pressure (parallel input materialization)**
    - Location: `src/auralis/core/tts.py` (`parallel_inputs` construction)
@@ -75,8 +75,8 @@ This page tracks bottlenecks observed in the current inference pipeline and opti
 
 ### Speaker Embedding Caching
 - **Before:** Every speaker file loaded from disk, resampled, and computed fresh embeddings
-- **After:** LRU cache (100 entries) stores computed embeddings keyed by (file_path, load_sr, max_ref_length, sound_norm_refs, librosa_trim_db)
-- **Impact:** Eliminates redundant I/O and computation for repeated speaker files
+- **After:** LRU cache (100 entries by default) stores computed embeddings plus CPU audio keyed by (file_path, load_sr, max_ref_length, sound_norm_refs, librosa_trim_db)
+- **Impact:** Eliminates redundant I/O and embedding computation for repeated speaker files without retaining per-entry audio on GPU
 - **API:** Use `engine.clear_speaker_embedding_cache()` to manually clear when needed
 - **Files:** `src/auralis/models/xttsv2/XTTSv2.py`
 
@@ -88,7 +88,6 @@ This page tracks bottlenecks observed in the current inference pipeline and opti
 
 ### Error Recovery Speed
 - **Before:** 1-second sleep on queue processing errors
-- **After:** 0.1-second sleep for faster recovery
-- **Impact:** 10x faster recovery from transient errors
+- **After:** capped exponential backoff starting at 0.1s for faster transient recovery without retry spam under persistent failures
+- **Impact:** Fast transient recovery while reducing repeated error churn
 - **Files:** `src/auralis/common/scheduling/two_phase_scheduler.py`
-

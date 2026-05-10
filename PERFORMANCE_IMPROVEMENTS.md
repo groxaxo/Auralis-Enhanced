@@ -37,9 +37,10 @@ A comprehensive performance analysis identified **15 distinct bottlenecks** acro
 - Redundant neural network forward passes for embedding computation
 
 **Solution:**
-- Implement LRU cache (100 entries) for speaker embeddings
+- Implement an LRU cache (100 entries by default, configurable via `speaker_embedding_cache_size`) for speaker conditioning data
 - Cache key: `(file_path, load_sr, max_ref_length, sound_norm_refs, librosa_trim_db)`
-- FIFO eviction when cache full
+- Store cached reference audio on CPU so repeated requests avoid disk I/O without retaining per-speaker GPU buffers
+- LRU eviction when cache full
 - Public `clear_speaker_embedding_cache()` API for manual cache management
 
 **Files Changed:**
@@ -87,9 +88,9 @@ engine.clear_speaker_embedding_cache()
 - User-visible delays
 
 **Solution:**
-- Reduce error recovery delay from 1s to 0.1s (100ms)
-- Maintains error logging and handling logic
-- Allows rapid retry on transient failures
+- Replace the fixed 1-second delay with capped exponential backoff starting at 0.1s
+- Use exception logging while keeping retries fast for transient failures
+- Avoids excessive retry churn under persistent failures
 
 **Files Changed:**
 - `src/auralis/common/scheduling/two_phase_scheduler.py` (line 105)
@@ -162,10 +163,10 @@ To measure the impact of these optimizations:
 ## Memory Considerations
 
 ### Speaker Embedding Cache Memory Usage
-- **Per cache entry:** ~1-2 MB (depends on audio length)
-- **Max cache size:** 100 entries
-- **Max memory footprint:** ~100-200 MB
-- **Eviction policy:** FIFO when cache full
+- **Per cache entry:** roughly the CPU audio payload for the configured `max_ref_length` plus a small speaker embedding tensor (about 2.6 MB at the default 30s / 22.05 kHz / float32 settings)
+- **Default max cache size:** 100 entries (`speaker_embedding_cache_size` can be lowered or disabled with `0`)
+- **Default max memory footprint:** roughly 260 MB of CPU memory at the default settings, plus cache/container overhead
+- **Eviction policy:** LRU
 
 **Recommendation:** Monitor memory usage in production. If memory is constrained, reduce cache size or call `clear_speaker_embedding_cache()` periodically.
 

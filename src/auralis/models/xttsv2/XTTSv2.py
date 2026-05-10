@@ -2,6 +2,7 @@ import asyncio
 import functools
 import time
 import uuid
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 
 from pathlib import Path
@@ -86,6 +87,9 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.gpu_memory_utilization = kwargs.pop("gpu_memory_utilization", 0.35)
         self.cpu_offload_gb = kwargs.pop("cpu_offload_gb", 8.0)
         self.swap_space = kwargs.pop("swap_space", 2.0)
+        self.speaker_embedding_cache_size = max(
+            0, int(kwargs.pop("speaker_embedding_cache_size", 100))
+        )
         self.hifi_config = hifi_config
         self.gpt_config = gpt_config
         self.mel_bos_token_id = gpt_config.start_audio_token
@@ -108,7 +112,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.register_buffer("mel_stats", torch.ones(80))
 
         # Cache for speaker embeddings to avoid redundant I/O and computation
-        self._speaker_embedding_cache = {}
+        self._speaker_embedding_cache = OrderedDict()
 
         # Initialize all nn.Module components
         self.conditioning_encoder = ConditioningEncoder(
@@ -179,7 +183,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         """Clear the speaker embedding cache to free memory.
 
         This method removes all cached speaker embeddings and their associated
-        audio tensors, freeing up GPU/CPU memory. Useful for long-running services
+        CPU audio tensors, freeing up cache memory. Useful for long-running services
         or when switching between different sets of speaker voices.
         """
         self._speaker_embedding_cache.clear()
@@ -541,12 +545,13 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             # Check cache first
             if cache_key in self._speaker_embedding_cache:
                 cached_data = self._speaker_embedding_cache[cache_key]
+                self._speaker_embedding_cache.move_to_end(cache_key)
                 speaker_embeddings.append(cached_data["speaker_embedding"])
                 audios.append(cached_data["audio"])
                 continue
 
             audio = load_audio(file_path, load_sr)
-            audio = audio[:, : load_sr * max_ref_length].to(self.device).to(self.dtype)
+            audio = audio[:, : load_sr * max_ref_length].to(self.dtype)
             if sound_norm_refs:
                 audio = (audio / torch.abs(audio).max()) * 0.75
             if librosa_trim_db is not None:
@@ -557,15 +562,14 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             speaker_embeddings.append(speaker_embedding)
             audios.append(audio)
 
-            # Cache the results (limit cache size to 100 entries)
-            if len(self._speaker_embedding_cache) >= 100:
-                # Remove oldest entry (FIFO eviction)
-                self._speaker_embedding_cache.pop(next(iter(self._speaker_embedding_cache)))
-
-            self._speaker_embedding_cache[cache_key] = {
-                "speaker_embedding": speaker_embedding,
-                "audio": audio,
-            }
+            if self.speaker_embedding_cache_size > 0:
+                self._speaker_embedding_cache[cache_key] = {
+                    "speaker_embedding": speaker_embedding,
+                    "audio": audio.detach().cpu(),
+                }
+                self._speaker_embedding_cache.move_to_end(cache_key)
+                if len(self._speaker_embedding_cache) > self.speaker_embedding_cache_size:
+                    self._speaker_embedding_cache.popitem(last=False)
 
         # Merge all the audios and compute the latents for the GPT
         full_audio = torch.cat(audios, dim=-1)
