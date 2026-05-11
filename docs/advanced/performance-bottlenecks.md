@@ -47,8 +47,8 @@ This page tracks bottlenecks observed in the current inference pipeline and opti
 
 10. **Error handling delays in scheduler**
     - Location: `src/auralis/common/scheduling/two_phase_scheduler.py` (line 104)
-    - Impact: 1-second sleep on errors prevents fast recovery.
-    - **Status:** FIXED - reduced error recovery delay from 1s to 0.1s.
+    - Impact: A fixed 1-second retry delay slowed transient recovery while creating trade-offs under persistent failures.
+    - **Status:** FIXED - replaced with capped exponential backoff starting at 0.1s.
 
 ## 3090-specific optimization priorities (no quality/resource increase)
 
