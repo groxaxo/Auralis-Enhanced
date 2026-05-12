@@ -7,6 +7,11 @@ from contextlib import asynccontextmanager
 from auralis.common.definitions.scheduler import QueuedRequest, TaskState
 from auralis.common.logging.logger import setup_logger
 
+INITIAL_QUEUE_ERROR_BACKOFF_SECONDS = 0.1
+MAX_QUEUE_ERROR_BACKOFF_SECONDS = 1.0
+QUEUE_ERROR_BACKOFF_MULTIPLIER = 2
+MAX_QUEUE_ERROR_BACKOFF_EXPONENT = 3
+
 
 class TwoPhaseScheduler:
     """Two-phase asynchronous task scheduler with parallel processing support.
@@ -57,12 +62,28 @@ class TwoPhaseScheduler:
         self.active_requests = {}
         self.queue_processor_tasks = []
         self.cancel_warning_issued = False
+        self.queue_error_streak = 0
 
         # Concurrency controls
         self.second_phase_sem = None
         self.active_generator_count = 0
         self.generator_count_lock = asyncio.Lock()
         self.cleanup_lock = asyncio.Lock()
+
+    async def _handle_queue_processing_error(self, error: Exception):
+        self.queue_error_streak += 1
+        exponent = min(
+            max(0, self.queue_error_streak - 1), MAX_QUEUE_ERROR_BACKOFF_EXPONENT
+        )
+        backoff = min(
+            MAX_QUEUE_ERROR_BACKOFF_SECONDS,
+            INITIAL_QUEUE_ERROR_BACKOFF_SECONDS
+            * (QUEUE_ERROR_BACKOFF_MULTIPLIER ** exponent),
+        )
+        self.logger.exception(
+            f"Queue processing error (retrying in {backoff:.1f}s): {error}"
+        )
+        await asyncio.sleep(backoff)
 
     async def start(self):
         """Start the scheduler.
@@ -94,14 +115,14 @@ class TwoPhaseScheduler:
                     async with self._request_lifecycle(request.id):
                         self.active_requests[request.id] = request
                         await self._process_request(request)
+                self.queue_error_streak = 0
             except asyncio.CancelledError:
                 if not self.cancel_warning_issued:
                     self.logger.warning("Queue processing task cancelled")
                     self.cancel_warning_issued = True
                 break
             except Exception as e:
-                self.logger.error(f"Queue processing error: {e}")
-                await asyncio.sleep(1)
+                await self._handle_queue_processing_error(e)
 
     @asynccontextmanager
     async def _request_lifecycle(self, request_id: str):
@@ -354,7 +375,8 @@ class TwoPhaseScheduler:
         """
         current_index = 0
         last_progress = time.time()
-        wait_timeout = self.request_timeout or 30.0
+        # Use shorter default timeout (5s) to avoid long stalls; still respect request_timeout if set
+        wait_timeout = self.request_timeout if self.request_timeout is not None else 5.0
 
         while not self._is_processing_complete(request):
             if self._check_timeout(last_progress):
