@@ -703,6 +703,12 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
     def _normalize_audio_reference_for_cache(
         audio_reference: Union[str, Path, bytes]
     ) -> Tuple[str, str]:
+        """Normalize a reference into a compact, type-tagged cache-key fragment.
+
+        Paths and string references are stored as string values with a type prefix.
+        Raw audio bytes are replaced with a short BLAKE2 digest so the cache does
+        not retain large payloads in memory.
+        """
         if isinstance(audio_reference, bytes):
             digest = hashlib.blake2b(audio_reference, digest_size=16).hexdigest()
             return ("bytes", digest)
@@ -726,6 +732,13 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         sound_norm_refs: bool,
         load_sr: int,
     ) -> Tuple[Tuple[Tuple[str, str], ...], int, int, int, Optional[float], bool, int]:
+        """Build an order-preserving cache key for speaker conditioning inputs.
+
+        Reference ordering is preserved because ``get_conditioning_latents`` uses
+        the provided order when concatenating audio. The final cache key combines
+        the normalized references with the conditioning parameters that affect the
+        computed latents and speaker embedding.
+        """
         references = (
             audio_reference
             if isinstance(audio_reference, (list, tuple))
