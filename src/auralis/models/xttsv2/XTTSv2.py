@@ -92,6 +92,15 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.gpu_memory_utilization = kwargs.pop("gpu_memory_utilization", 0.5)
         self.cpu_offload_gb = kwargs.pop("cpu_offload_gb", 8.0)
         self.swap_space = kwargs.pop("swap_space", 2.0)
+        speaker_embedding_cache_size = kwargs.pop("speaker_embedding_cache_size", 100)
+        try:
+            self.speaker_embedding_cache_size = max(
+                0, int(speaker_embedding_cache_size)
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "speaker_embedding_cache_size must be convertible to an integer greater than or equal to 0"
+            ) from exc
         self.hifi_config = hifi_config
         self.gpt_config = gpt_config
         self.mel_bos_token_id = gpt_config.start_audio_token
@@ -112,6 +121,9 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
         # Register buffer before creating modules
         self.register_buffer("mel_stats", torch.ones(80))
+
+        # Cache for speaker embeddings to avoid redundant I/O and computation
+        self._speaker_embedding_cache = OrderedDict()
 
         # Initialize all nn.Module components
         self.conditioning_encoder = ConditioningEncoder(
@@ -188,6 +200,16 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self._max_cache_size = 100  # Limit cache size to prevent memory issues
 
         self.eval()
+
+    def clear_speaker_embedding_cache(self):
+        """Clear the speaker embedding cache to free memory.
+
+        This method removes all cached speaker embeddings and the associated
+        CPU audio tensors, freeing up cache memory. Useful for long-running services
+        or when switching between different sets of speaker voices.
+        """
+        self._speaker_embedding_cache.clear()
+        self.logger.info("Speaker embedding cache cleared")
 
     def get_memory_usage_curve(self):
         """Calculate the memory usage curve based on concurrency level.
@@ -457,7 +479,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
                 mel_chunk = wav_to_mel_cloning(
                     audio_chunk,
-                    mel_norms=self.mel_stats.cpu(),
+                    mel_norms=self.mel_stats,
+                    device=self.device,
                     n_fft=2048,
                     hop_length=256,
                     win_length=1024,
@@ -468,7 +491,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                     f_max=8000,
                     n_mels=80,
                 )
-                style_emb = self.get_style_emb(mel_chunk.to(self.device), None)
+                style_emb = self.get_style_emb(mel_chunk, None)
                 style_embs.append(style_emb)
 
             # mean style embedding
@@ -476,7 +499,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         else:
             mel = wav_to_mel_cloning(
                 audio,
-                mel_norms=self.mel_stats.cpu(),
+                mel_norms=self.mel_stats,
+                device=self.device,
                 n_fft=4096,
                 hop_length=1024,
                 win_length=4096,
@@ -487,7 +511,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 f_max=8000,
                 n_mels=80,
             )
-            cond_latent = self.get_style_emb(mel.to(self.device))
+            cond_latent = self.get_style_emb(mel)
         return cond_latent.transpose(1, 2)
 
     async def get_conditioning_latents(
@@ -531,8 +555,25 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         speaker_embeddings = []
         audios = []
         for file_path in audio_paths:
+            # Generate cache key from file path and parameters
+            cache_key = (
+                str(file_path),
+                load_sr,
+                max_ref_length,
+                sound_norm_refs,
+                librosa_trim_db,
+            )
+
+            # Check cache first
+            if cache_key in self._speaker_embedding_cache:
+                cached_data = self._speaker_embedding_cache[cache_key]
+                self._speaker_embedding_cache.move_to_end(cache_key)
+                speaker_embeddings.append(cached_data["speaker_embedding"])
+                audios.append(cached_data["audio"])
+                continue
+
             audio = load_audio(file_path, load_sr)
-            audio = audio[:, : load_sr * max_ref_length].to(self.device).to(self.dtype)
+            audio = audio[:, : load_sr * max_ref_length].to(self.dtype)
             if sound_norm_refs:
                 audio = (audio / torch.abs(audio).max()) * 0.75
             if librosa_trim_db is not None:
@@ -541,11 +582,19 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             # Compute latents for the decoder
             speaker_embedding = await self._get_speaker_embedding(audio, load_sr)
             speaker_embeddings.append(speaker_embedding)
-
             audios.append(audio)
 
+            if self.speaker_embedding_cache_size > 0:
+                self._speaker_embedding_cache[cache_key] = {
+                    "speaker_embedding": speaker_embedding,
+                    "audio": audio.cpu(),
+                }
+                self._speaker_embedding_cache.move_to_end(cache_key)
+                if len(self._speaker_embedding_cache) > self.speaker_embedding_cache_size:
+                    self._speaker_embedding_cache.popitem(last=False)
+
         # Merge all the audios and compute the latents for the GPT
-        full_audio = torch.cat(audios, dim=-1)
+        full_audio = torch.cat(audios, dim=-1).to(self.device)
         gpt_cond_latents = await asyncio.to_thread(
             self.get_gpt_cond_latents,
             full_audio,
