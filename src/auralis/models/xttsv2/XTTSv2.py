@@ -1,6 +1,5 @@
 import asyncio
 import functools
-import hashlib
 import time
 import uuid
 from collections import OrderedDict
@@ -41,8 +40,6 @@ from .components.vllm.hijack import ExtendedSamplingParams, LogitsRepetitionPena
 from .components.tts.layers.xtts.hifigan_decoder import HifiDecoder
 from .components.tts.layers.xtts.latent_encoder import ConditioningEncoder
 from .components.tts.layers.xtts.perceiver_encoder import PerceiverResampler
-
-_CONDITIONING_CACHE_DIGEST_SIZE = 16
 
 
 class XTTSv2Engine(BaseAsyncTTSEngine):
@@ -87,9 +84,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
         self.gpt_model = kwargs.pop("gpt_model")
         self.device_map = kwargs.pop("device_map", "auto")
-        # Increased from 0.35 to 0.5 for better GPU utilization on modern GPUs
-        # This allows more concurrent requests while still leaving headroom for decoder
-        self.gpu_memory_utilization = kwargs.pop("gpu_memory_utilization", 0.5)
+        self.gpu_memory_utilization = kwargs.pop("gpu_memory_utilization", 0.35)
         self.cpu_offload_gb = kwargs.pop("cpu_offload_gb", 8.0)
         self.swap_space = kwargs.pop("swap_space", 2.0)
         speaker_embedding_cache_size = kwargs.pop("speaker_embedding_cache_size", 100)
@@ -99,7 +94,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             )
         except (TypeError, ValueError) as exc:
             raise ValueError(
-                "speaker_embedding_cache_size must be convertible to a non-negative integer"
+                "speaker_embedding_cache_size must be convertible to an integer greater than or equal to 0"
             ) from exc
         self.hifi_config = hifi_config
         self.gpt_config = gpt_config
@@ -148,10 +143,6 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             )
         )
 
-        # Keep SDP attention enabled on all CUDA devices; the attention module
-        # selects flash kernels internally when the active GPU supports them.
-        use_flash_attn = not self.is_cpu
-
         self.conditioning_perceiver = PerceiverResampler(
             dim=gpt_config.hidden_size,
             depth=2,
@@ -160,7 +151,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             dim_head=64,
             heads=8,
             ff_mult=4,
-            use_flash_attn=use_flash_attn,
+            use_flash_attn=not self.is_cpu,
         )
 
         # Initialize HiFi-GAN decoder
@@ -192,13 +183,6 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.decoder_semaphore = asyncio.BoundedSemaphore(
             semaphore_concurrency
         )  # empirically found a good value
-
-        # LRU cache for speaker conditioning to avoid recomputation.
-        # Key: normalized audio references + conditioning parameters.
-        self._conditioning_cache = OrderedDict()
-        self._conditioning_cache_lock = asyncio.Lock()
-        self._max_cache_size = 100  # Limit cache size to prevent memory issues
-
         self.eval()
 
     def clear_speaker_embedding_cache(self):
@@ -582,8 +566,6 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             # Compute latents for the decoder
             speaker_embedding = await self._get_speaker_embedding(audio, load_sr)
             speaker_embeddings.append(speaker_embedding)
-            # Keep cached/reference audio on CPU until concatenation so repeated
-            # speaker cache hits avoid pinning per-reference tensors on GPU.
             audios.append(audio)
 
             if self.speaker_embedding_cache_size > 0:
@@ -614,28 +596,16 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
     async def cuda_memory_manager(self):
         """Context manager for CUDA memory management.
 
-        Releases cached CUDA memory periodically (every 10 decoder calls) to avoid
-        fragmentation without paying the cleanup overhead on every decode.
+        Releases cached CUDA memory after each decoder call to avoid fragmentation.
         ``torch.cuda.synchronize()`` and ``asyncio.sleep`` are intentionally omitted:
         the decoder runs inside ``asyncio.to_thread`` which already waits for the
         thread (and all GPU work launched within it) to complete before returning.
-
-        Memory cleanup is performed periodically rather than on every call to reduce
-        overhead while still preventing fragmentation during sustained load.
         """
         try:
             yield
         finally:
             if torch.cuda.is_available():
-                # Only clear cache periodically to reduce overhead
-                # Check if we should clear based on simple counter
-                if not hasattr(self, '_decode_counter'):
-                    self._decode_counter = 0
-                self._decode_counter += 1
-
-                # Clear cache every 10 decoder calls to balance fragmentation vs overhead
-                if self._decode_counter % 10 == 0:
-                    torch.cuda.empty_cache()
+                torch.cuda.empty_cache()
 
     def get_style_emb(
         self, cond_input: torch.Tensor, return_latent: Optional[bool] = False
@@ -753,97 +723,9 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
         return text_tokens, cond_latents, speaker_embeddings
 
-    @staticmethod
-    def _normalize_audio_reference_for_cache(
-        audio_reference: Union[str, Path, bytes]
-    ) -> Tuple[str, str]:
-        """Normalize a reference into a compact, type-tagged cache-key fragment.
-
-        Paths and string references are stored as string values with a type prefix.
-        Raw audio bytes are replaced with a short BLAKE2 digest so the cache does
-        not retain large payloads in memory.
-        """
-        if isinstance(audio_reference, bytes):
-            digest = hashlib.blake2b(
-                audio_reference,
-                digest_size=_CONDITIONING_CACHE_DIGEST_SIZE,
-            ).hexdigest()
-            return ("bytes", digest)
-        if isinstance(audio_reference, Path):
-            return ("path", str(audio_reference))
-        return ("ref", str(audio_reference))
-
-    def _get_conditioning_cache_key(
-        self,
-        audio_reference: Union[
-            str,
-            Path,
-            bytes,
-            List[Union[str, Path, bytes]],
-            Tuple[Union[str, Path, bytes], ...],
-        ],
-        max_ref_length: int,
-        gpt_cond_len: int,
-        gpt_cond_chunk_len: int,
-        librosa_trim_db: Optional[float],
-        sound_norm_refs: bool,
-        load_sr: int,
-    ) -> Tuple[Tuple[Tuple[str, str], ...], int, int, int, Optional[float], bool, int]:
-        """Build an order-preserving cache key for speaker conditioning inputs.
-
-        Reference ordering is preserved because ``get_conditioning_latents`` uses
-        the provided order when concatenating audio. The final cache key combines
-        the normalized references with the conditioning parameters that affect the
-        computed latents and speaker embedding.
-        """
-        references = (
-            audio_reference
-            if isinstance(audio_reference, (list, tuple))
-            else (audio_reference,)
-        )
-        normalized_references = tuple(
-            self._normalize_audio_reference_for_cache(reference)
-            for reference in references
-        )
-        return (
-            normalized_references,
-            max_ref_length,
-            gpt_cond_len,
-            gpt_cond_chunk_len,
-            librosa_trim_db,
-            sound_norm_refs,
-            load_sr,
-        )
-
-    async def _get_cached_conditioning_result(
-        self,
-        cache_key,
-        cache_reference_key: Optional[Tuple[Tuple[str, str], ...]] = None,
-        log_cache_hit: bool = False,
-    ):
-        """Return a cached conditioning tuple and refresh its LRU position."""
-        async with self._conditioning_cache_lock:
-            cached_result = self._conditioning_cache.get(cache_key)
-            if cached_result is None:
-                return None
-            self._conditioning_cache.move_to_end(cache_key)
-
-        if log_cache_hit:
-            self.logger.debug(
-                f"Using cached conditioning for audio reference(s): {cache_reference_key}"
-            )
-
-        return cached_result
-
     async def get_audio_conditioning(
         self,
-        audio_reference: Union[
-            str,
-            Path,
-            bytes,
-            List[Union[str, Path, bytes]],
-            Tuple[Union[str, Path, bytes], ...],
-        ],
+        audio_reference: [str, Path],
         max_ref_length=30,
         gpt_cond_len=6,
         gpt_cond_chunk_len=6,
@@ -853,12 +735,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
     ):
         """Generate audio conditioning from reference files.
 
-        Async wrapper around ``get_conditioning_latents`` with concurrency control
-        and LRU caching for repeated reference audio requests.
-
         Args:
-            audio_reference: Reference audio paths / payloads in the order they
-                should be processed.
+            audio_reference ([str, Path]): Reference audio file paths.
             max_ref_length (int, optional): Maximum reference length in seconds. Defaults to 30.
             gpt_cond_len (int, optional): Length of GPT conditioning. Defaults to 6.
             gpt_cond_chunk_len (int, optional): Length of each conditioning chunk. Defaults to 6.
@@ -869,32 +747,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         Returns:
             Tuple: GPT conditioning latents and speaker embeddings.
         """
-        cache_key = self._get_conditioning_cache_key(
-            audio_reference,
-            max_ref_length,
-            gpt_cond_len,
-            gpt_cond_chunk_len,
-            librosa_trim_db,
-            sound_norm_refs,
-            load_sr,
-        )
-
-        cached_result = await self._get_cached_conditioning_result(
-            cache_key,
-            cache_reference_key=cache_key[0],
-            log_cache_hit=True,
-        )
-        if cached_result is not None:
-            return cached_result
-
+        """Async version of get_conditioning_latents with concurrency control."""
         async with self.encoder_semaphore:
-            # Double-check cache after acquiring semaphore (another coroutine might have populated it)
-            # Skip cache-hit logging here so requests that miss the first check do not
-            # emit duplicate log lines after waiting on the semaphore.
-            cached_result = await self._get_cached_conditioning_result(cache_key)
-            if cached_result is not None:
-                return cached_result
-
             # Run the original get_conditioning_latents in executor
             result = await self.get_conditioning_latents(
                 audio_reference,
@@ -905,12 +759,6 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 sound_norm_refs,
                 load_sr,
             )
-
-            async with self._conditioning_cache_lock:
-                self._conditioning_cache[cache_key] = result
-                self._conditioning_cache.move_to_end(cache_key)
-                if len(self._conditioning_cache) > self._max_cache_size:
-                    self._conditioning_cache.popitem(last=False)
             return result
 
     async def get_model_logits(
