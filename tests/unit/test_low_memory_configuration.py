@@ -177,3 +177,73 @@ def test_xtts_vllm_engine_configuration_has_cpu_and_gpu_paths():
     assert subscript_assignments["engine_kwargs['swap_space']"] == "self.swap_space"
     assert subscript_assignments["engine_kwargs['cpu_offload_gb']"] == "self.cpu_offload_gb"
     assert subscript_assignments["engine_kwargs['gpu_memory_utilization']"] == "mem_utilization"
+
+
+def test_xtts_conditioning_perceiver_keeps_sdp_attention_enabled_on_cuda():
+    module = _parse_module("src/auralis/models/xttsv2/XTTSv2.py")
+    init_method = _get_class_method(module, "XTTSv2Engine", "__init__")
+
+    assignments = {
+        ast.unparse(target): ast.unparse(node.value)
+        for node in ast.walk(init_method)
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    assert assignments["use_flash_attn"] == "not self.is_cpu"
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get_device_properties"
+        for node in ast.walk(init_method)
+    )
+
+
+def test_xtts_conditioning_cache_uses_lru_and_compact_reference_keys():
+    module = _parse_module("src/auralis/models/xttsv2/XTTSv2.py")
+    init_method = _get_class_method(module, "XTTSv2Engine", "__init__")
+    normalize_method = _get_class_method(
+        module, "XTTSv2Engine", "_normalize_audio_reference_for_cache"
+    )
+    conditioning_method = _get_class_method(
+        module, "XTTSv2Engine", "get_audio_conditioning"
+    )
+
+    assert any(
+        any(
+            isinstance(target, ast.Attribute)
+            and ast.unparse(target) == "self._conditioning_cache"
+            for target in node.targets
+        )
+        and ast.unparse(node.value) == "OrderedDict()"
+        for node in ast.walk(init_method)
+        if isinstance(node, ast.Assign)
+    )
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and ast.unparse(node.func) == "hashlib.blake2b"
+        for node in ast.walk(normalize_method)
+    )
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "sorted"
+        for node in ast.walk(conditioning_method)
+    )
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "move_to_end"
+        for node in ast.walk(conditioning_method)
+    )
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "popitem"
+        and any(
+            keyword.arg == "last" and ast.unparse(keyword.value) == "False"
+            for keyword in node.keywords
+        )
+        for node in ast.walk(conditioning_method)
+    )

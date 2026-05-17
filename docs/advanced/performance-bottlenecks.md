@@ -5,14 +5,14 @@ This page tracks bottlenecks observed in the current inference pipeline and opti
 ## Recently Resolved Bottlenecks
 
 1. **Flash attention not enabled for all Ampere+ GPUs** ✅ FIXED
-   - Location: `src/auralis/models/xttsv2/XTTSv2.py:133-149`
-   - Impact: Significant performance improvement for RTX 30xx/40xx series and other Ampere+ GPUs
-   - Solution: Modified perceiver encoder initialization to properly detect SM >= 8.0 GPUs and enable flash attention
+    - Location: `src/auralis/models/xttsv2/XTTSv2.py:133-149`
+    - Impact: Significant performance improvement for RTX 30xx/40xx series and other Ampere+ GPUs
+    - Solution: Kept SDP attention enabled on all CUDA devices so pre-Ampere GPUs still use PyTorch's optimized math/mem-efficient kernels, while the attention module continues to select hardware flash kernels automatically on SM >= 8.0 GPUs
 
 2. **Speaker conditioning recomputation overhead** ✅ FIXED
-   - Location: `src/auralis/models/xttsv2/XTTSv2.py:181-185, 714-750`
-   - Impact: Reduced latency for repeated requests with same speaker
-   - Solution: Implemented LRU cache for speaker conditioning (100 entry limit)
+    - Location: `src/auralis/models/xttsv2/XTTSv2.py:181-185, 714-750`
+    - Impact: Reduced latency for repeated requests with same speaker
+    - Solution: Implemented an OrderedDict-backed LRU cache for speaker conditioning (100 entry limit) with order-preserving reference keys and hashed byte payload identifiers
 
 3. **Excessive CUDA memory cache clearing** ✅ OPTIMIZED
    - Location: `src/auralis/models/xttsv2/XTTSv2.py:558-582`
@@ -49,9 +49,9 @@ This page tracks bottlenecks observed in the current inference pipeline and opti
    - **Status:** request logs now include `total`, `phase1`, and `phase2` durations for bottleneck attribution.
 
 6. **Speaker conditioning preparation for cloning requests** ✅ OPTIMIZED (This PR)
-   - Location: `src/auralis/core/tts.py` (`prepare_for_streaming_generation`, `_prepare_generation_context`)
-   - Impact: Added front-loaded latency when speaker embeddings and GPT-like conditioning are both enabled.
-   - **Status:** Now cached to avoid recomputation for repeated speakers.
+    - Location: `src/auralis/models/xttsv2/XTTSv2.py` (`get_audio_conditioning`)
+    - Impact: Added front-loaded latency when speaker embeddings and GPT-like conditioning are both enabled.
+    - **Status:** Now cached to avoid recomputation for repeated speakers.
 
 7. **Cross-phase handoff pressure (parallel input materialization)**
    - Location: `src/auralis/core/tts.py` (`parallel_inputs` construction)
