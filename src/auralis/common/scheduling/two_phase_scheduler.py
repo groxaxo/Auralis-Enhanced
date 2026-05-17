@@ -78,7 +78,7 @@ class TwoPhaseScheduler:
         backoff = min(
             MAX_QUEUE_ERROR_BACKOFF_SECONDS,
             INITIAL_QUEUE_ERROR_BACKOFF_SECONDS
-            * (QUEUE_ERROR_BACKOFF_MULTIPLIER ** exponent),
+            * pow(QUEUE_ERROR_BACKOFF_MULTIPLIER, exponent),
         )
         self.logger.exception(
             f"Queue processing error (retrying in {backoff:.1f}s): {error}"
