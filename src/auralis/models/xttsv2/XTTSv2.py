@@ -198,6 +198,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self._conditioning_cache = OrderedDict()
         self._conditioning_cache_lock = asyncio.Lock()
         self._max_cache_size = 100  # Limit cache size to prevent memory issues
+        self._decode_counter_lock = asyncio.Lock()
+        self._decode_counter = 0
 
         self.eval()
 
@@ -627,15 +629,13 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             yield
         finally:
             if torch.cuda.is_available():
-                # Only clear cache periodically to reduce overhead
-                # Check if we should clear based on simple counter
-                if not hasattr(self, '_decode_counter'):
-                    self._decode_counter = 0
-                self._decode_counter += 1
+                # Only clear cache periodically to reduce overhead.
+                async with self._decode_counter_lock:
+                    self._decode_counter += 1
 
-                # Clear cache every 10 decoder calls to balance fragmentation vs overhead
-                if self._decode_counter % 10 == 0:
-                    torch.cuda.empty_cache()
+                    # Clear cache every 10 decoder calls to balance fragmentation vs overhead.
+                    if self._decode_counter % 10 == 0:
+                        torch.cuda.empty_cache()
 
     def get_style_emb(
         self, cond_input: torch.Tensor, return_latent: Optional[bool] = False
