@@ -42,6 +42,8 @@ from .components.tts.layers.xtts.hifigan_decoder import HifiDecoder
 from .components.tts.layers.xtts.latent_encoder import ConditioningEncoder
 from .components.tts.layers.xtts.perceiver_encoder import PerceiverResampler
 
+_CONDITIONING_CACHE_DIGEST_SIZE = 16
+
 
 class XTTSv2Engine(BaseAsyncTTSEngine):
     """Asynchronous XTTS model implementation using VLLM's AsyncEngine.
@@ -711,7 +713,10 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         not retain large payloads in memory.
         """
         if isinstance(audio_reference, bytes):
-            digest = hashlib.blake2b(audio_reference, digest_size=16).hexdigest()
+            digest = hashlib.blake2b(
+                audio_reference,
+                digest_size=_CONDITIONING_CACHE_DIGEST_SIZE,
+            ).hexdigest()
             return ("bytes", digest)
         if isinstance(audio_reference, Path):
             return ("path", str(audio_reference))
@@ -760,7 +765,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         )
 
     async def _get_cached_conditioning_result(
-        self, cache_key, log_cache_hit: bool = False
+        self, cache_key, cache_reference_key=None, log_cache_hit: bool = False
     ):
         """Return a cached conditioning tuple and refresh its LRU position."""
         async with self._conditioning_cache_lock:
@@ -770,7 +775,9 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             self._conditioning_cache.move_to_end(cache_key)
 
         if log_cache_hit:
-            self.logger.debug(f"Using cached conditioning for audio reference")
+            self.logger.debug(
+                f"Using cached conditioning for audio reference(s): {cache_reference_key}"
+            )
 
         return cached_result
 
@@ -819,7 +826,9 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         )
 
         cached_result = await self._get_cached_conditioning_result(
-            cache_key, log_cache_hit=True
+            cache_key,
+            cache_reference_key=cache_key[0],
+            log_cache_hit=True,
         )
         if cached_result is not None:
             return cached_result

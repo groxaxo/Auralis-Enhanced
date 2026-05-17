@@ -1,6 +1,5 @@
 import ast
 import hashlib
-import textwrap
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
@@ -32,24 +31,43 @@ def _get_function(module: ast.Module, function_name: str):
 
 
 def _load_xtts_cache_key_harness():
-    source = (
-        ROOT / "src" / "auralis" / "models" / "xttsv2" / "XTTSv2.py"
-    ).read_text(encoding="utf-8")
-    module = ast.parse(source)
+    module = _parse_module("src/auralis/models/xttsv2/XTTSv2.py")
 
     class_node = next(
         node
         for node in module.body
         if isinstance(node, ast.ClassDef) and node.name == "XTTSv2Engine"
     )
-    helper_sources = []
-    for method in class_node.body:
-        if (
-            isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and method.name
-            in {"_normalize_audio_reference_for_cache", "_get_conditioning_cache_key"}
-        ):
-            helper_sources.append(textwrap.indent(ast.unparse(method), "    "))
+    helper_methods = [
+        method
+        for method in class_node.body
+        if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and method.name
+        in {"_normalize_audio_reference_for_cache", "_get_conditioning_cache_key"}
+    ]
+    harness_module = ast.Module(
+        body=[
+            node
+            for node in module.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name)
+                and target.id == "_CONDITIONING_CACHE_DIGEST_SIZE"
+                for target in node.targets
+            )
+        ]
+        + [
+            ast.ClassDef(
+                name="CacheKeyHarness",
+                bases=[],
+                keywords=[],
+                body=helper_methods,
+                decorator_list=[],
+            )
+        ],
+        type_ignores=[],
+    )
+    harness_module = ast.fix_missing_locations(harness_module)
 
     namespace = {
         "hashlib": hashlib,
@@ -59,7 +77,7 @@ def _load_xtts_cache_key_harness():
         "Tuple": Tuple,
         "Optional": Optional,
     }
-    exec("class CacheKeyHarness:\n" + "\n\n".join(helper_sources), namespace)
+    exec(compile(harness_module, "<xtts-cache-key-harness>", "exec"), namespace)
     return namespace["CacheKeyHarness"]()
 
 
