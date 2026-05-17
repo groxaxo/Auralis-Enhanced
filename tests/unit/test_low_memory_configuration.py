@@ -1,5 +1,8 @@
 import ast
+import hashlib
+import textwrap
 from pathlib import Path
+from typing import List, Optional, Tuple, Union
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -26,6 +29,38 @@ def _get_function(module: ast.Module, function_name: str):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name:
             return node
     raise AssertionError(f"{function_name} not found")
+
+
+def _load_xtts_cache_key_harness():
+    source = (
+        ROOT / "src" / "auralis" / "models" / "xttsv2" / "XTTSv2.py"
+    ).read_text(encoding="utf-8")
+    module = ast.parse(source)
+
+    class_node = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.ClassDef) and node.name == "XTTSv2Engine"
+    )
+    helper_sources = []
+    for method in class_node.body:
+        if (
+            isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and method.name
+            in {"_normalize_audio_reference_for_cache", "_get_conditioning_cache_key"}
+        ):
+            helper_sources.append(textwrap.indent(ast.unparse(method), "    "))
+
+    namespace = {
+        "hashlib": hashlib,
+        "Path": Path,
+        "Union": Union,
+        "List": List,
+        "Tuple": Tuple,
+        "Optional": Optional,
+    }
+    exec("class CacheKeyHarness:\n" + "\n\n".join(helper_sources), namespace)
+    return namespace["CacheKeyHarness"]()
 
 
 def _literal_value(node):
@@ -247,3 +282,30 @@ def test_xtts_conditioning_cache_uses_lru_and_compact_reference_keys():
         )
         for node in ast.walk(conditioning_method)
     )
+
+
+def test_xtts_conditioning_cache_key_preserves_order_at_runtime():
+    harness = _load_xtts_cache_key_harness()
+
+    first_order_key = harness._get_conditioning_cache_key(
+        ["speaker_b.wav", "speaker_a.wav"], 30, 6, 6, None, False, 22050
+    )
+    second_order_key = harness._get_conditioning_cache_key(
+        ["speaker_a.wav", "speaker_b.wav"], 30, 6, 6, None, False, 22050
+    )
+    bytes_key = harness._get_conditioning_cache_key(
+        [b"raw-audio"], 30, 6, 6, None, False, 22050
+    )
+
+    assert first_order_key[0] == (
+        ("ref", "speaker_b.wav"),
+        ("ref", "speaker_a.wav"),
+    )
+    assert second_order_key[0] == (
+        ("ref", "speaker_a.wav"),
+        ("ref", "speaker_b.wav"),
+    )
+    assert first_order_key != second_order_key
+    assert bytes_key[0][0][0] == "bytes"
+    assert bytes_key[0][0][1] != "raw-audio"
+    assert len(bytes_key[0][0][1]) == 32
