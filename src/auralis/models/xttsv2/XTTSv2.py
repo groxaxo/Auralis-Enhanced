@@ -99,7 +99,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             )
         except (TypeError, ValueError) as exc:
             raise ValueError(
-                "speaker_embedding_cache_size must be convertible to an integer greater than or equal to 0"
+                "speaker_embedding_cache_size must be convertible to a non-negative integer"
             ) from exc
         self.hifi_config = hifi_config
         self.gpt_config = gpt_config
@@ -582,6 +582,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             # Compute latents for the decoder
             speaker_embedding = await self._get_speaker_embedding(audio, load_sr)
             speaker_embeddings.append(speaker_embedding)
+            # Keep cached/reference audio on CPU until concatenation so repeated
+            # speaker cache hits avoid pinning per-reference tensors on GPU.
             audios.append(audio)
 
             if self.speaker_embedding_cache_size > 0:

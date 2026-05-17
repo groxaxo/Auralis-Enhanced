@@ -51,7 +51,8 @@ This page tracks bottlenecks observed in the current inference pipeline and opti
 6. **Speaker conditioning preparation for cloning requests** ✅ OPTIMIZED (This PR)
     - Location: `src/auralis/models/xttsv2/XTTSv2.py` (`get_audio_conditioning`) and `src/auralis/core/tts.py` call sites
     - Impact: Added front-loaded latency when speaker embeddings and GPT-like conditioning are both enabled.
-    - **Status:** optimized with an OrderedDict-backed LRU conditioning cache plus per-file speaker embedding caching to avoid redundant I/O and computation for repeated speakers without pinning cached audio on GPU.
+    - **Status:** optimized with an OrderedDict-backed LRU conditioning cache plus per-file speaker embedding caching.
+      This avoids redundant I/O and computation for repeated speakers without pinning cached audio on GPU.
 
 7. **Cross-phase handoff pressure (parallel input materialization)**
    - Location: `src/auralis/core/tts.py` (`parallel_inputs` construction)
