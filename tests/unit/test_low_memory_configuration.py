@@ -78,7 +78,7 @@ def _load_xtts_cache_key_harness():
         "Optional": Optional,
     }
     exec(compile(harness_module, "<xtts-cache-key-harness>", "exec"), namespace)
-    return namespace["CacheKeyHarness"]()
+    return namespace["CacheKeyHarness"](), namespace["_CONDITIONING_CACHE_DIGEST_SIZE"]
 
 
 def _literal_value(node):
@@ -303,7 +303,7 @@ def test_xtts_conditioning_cache_uses_lru_and_compact_reference_keys():
 
 
 def test_xtts_conditioning_cache_key_preserves_order_at_runtime():
-    harness = _load_xtts_cache_key_harness()
+    harness, digest_size = _load_xtts_cache_key_harness()
 
     first_order_key = harness._get_conditioning_cache_key(
         ["speaker_b.wav", "speaker_a.wav"], 30, 6, 6, None, False, 22050
@@ -326,4 +326,4 @@ def test_xtts_conditioning_cache_key_preserves_order_at_runtime():
     assert first_order_key != second_order_key
     assert bytes_key[0][0][0] == "bytes"
     assert bytes_key[0][0][1] != "raw-audio"
-    assert len(bytes_key[0][0][1]) == 32
+    assert len(bytes_key[0][0][1]) == digest_size * 2

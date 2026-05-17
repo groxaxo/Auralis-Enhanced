@@ -765,7 +765,10 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         )
 
     async def _get_cached_conditioning_result(
-        self, cache_key, cache_reference_key=None, log_cache_hit: bool = False
+        self,
+        cache_key,
+        cache_reference_key: Optional[Tuple[Tuple[str, str], ...]] = None,
+        log_cache_hit: bool = False,
     ):
         """Return a cached conditioning tuple and refresh its LRU position."""
         async with self._conditioning_cache_lock:
@@ -835,6 +838,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
         async with self.encoder_semaphore:
             # Double-check cache after acquiring semaphore (another coroutine might have populated it)
+            # Skip cache-hit logging here so requests that miss the first check do not
+            # emit duplicate log lines after waiting on the semaphore.
             cached_result = await self._get_cached_conditioning_result(cache_key)
             if cached_result is not None:
                 return cached_result
