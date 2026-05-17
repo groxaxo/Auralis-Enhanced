@@ -182,6 +182,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         # LRU cache for speaker conditioning to avoid recomputation.
         # Key: normalized audio references + conditioning parameters.
         self._conditioning_cache = OrderedDict()
+        self._conditioning_cache_lock = asyncio.Lock()
         self._max_cache_size = 100  # Limit cache size to prevent memory issues
 
         self.eval()
@@ -710,7 +711,11 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         not retain large payloads in memory.
         """
         if isinstance(audio_reference, bytes):
-            digest = hashlib.blake2b(audio_reference, digest_size=16).hexdigest()
+            digest = hashlib.blake2b(
+                audio_reference,
+                digest_size=16,
+                key=b"xttsv2-conditioning-cache",
+            ).hexdigest()
             return ("bytes", digest)
         if isinstance(audio_reference, Path):
             return ("path", str(audio_reference))
@@ -802,18 +807,20 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             load_sr,
         )
 
-        cached_result = self._conditioning_cache.get(cache_key)
-        if cached_result is not None:
-            self._conditioning_cache.move_to_end(cache_key)
-            self.logger.debug(f"Using cached conditioning for audio reference")
-            return cached_result
-
-        async with self.encoder_semaphore:
-            # Double-check cache after acquiring semaphore (another coroutine might have populated it)
+        async with self._conditioning_cache_lock:
             cached_result = self._conditioning_cache.get(cache_key)
             if cached_result is not None:
                 self._conditioning_cache.move_to_end(cache_key)
+                self.logger.debug(f"Using cached conditioning for audio reference")
                 return cached_result
+
+        async with self.encoder_semaphore:
+            # Double-check cache after acquiring semaphore (another coroutine might have populated it)
+            async with self._conditioning_cache_lock:
+                cached_result = self._conditioning_cache.get(cache_key)
+                if cached_result is not None:
+                    self._conditioning_cache.move_to_end(cache_key)
+                    return cached_result
 
             # Run the original get_conditioning_latents in executor
             result = await self.get_conditioning_latents(
@@ -826,10 +833,11 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 load_sr,
             )
 
-            self._conditioning_cache[cache_key] = result
-            self._conditioning_cache.move_to_end(cache_key)
-            if len(self._conditioning_cache) > self._max_cache_size:
-                self._conditioning_cache.popitem(last=False)
+            async with self._conditioning_cache_lock:
+                self._conditioning_cache[cache_key] = result
+                self._conditioning_cache.move_to_end(cache_key)
+                if len(self._conditioning_cache) > self._max_cache_size:
+                    self._conditioning_cache.popitem(last=False)
             return result
 
     async def get_model_logits(
