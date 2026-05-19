@@ -5,22 +5,22 @@ This page tracks bottlenecks observed in the current inference pipeline and opti
 ## Recently Resolved Bottlenecks
 
 1. **Flash attention not enabled for all Ampere+ GPUs** ✅ FIXED
-    - Location: `src/auralis/models/xttsv2/XTTSv2.py:133-149`
+    - Location: `src/auralis/models/xttsv2/XTTSv2.py:151-163`
     - Impact: Significant performance improvement for RTX 30xx/40xx series and other Ampere+ GPUs
     - Solution: Kept SDP attention enabled on all CUDA devices so pre-Ampere GPUs still use PyTorch's optimized math/mem-efficient kernels, while the attention module continues to select hardware flash kernels automatically on SM >= 8.0 GPUs
 
 2. **Speaker conditioning recomputation overhead** ✅ FIXED
-    - Location: `src/auralis/models/xttsv2/XTTSv2.py:181-185, 714-750`
+    - Location: `src/auralis/models/xttsv2/XTTSv2.py:196-200, 756-914`
     - Impact: Reduced latency for repeated requests with same speaker
     - Solution: Implemented an OrderedDict-backed LRU cache for speaker conditioning (100 entry limit) with order-preserving reference keys and hashed byte payload identifiers
 
 3. **Excessive CUDA memory cache clearing** ✅ OPTIMIZED
-   - Location: `src/auralis/models/xttsv2/XTTSv2.py:558-582`
+   - Location: `src/auralis/models/xttsv2/XTTSv2.py:616-638`
    - Impact: Reduced overhead from frequent cache clearing operations
    - Solution: Changed to periodic clearing (every 10 decoder calls) to balance fragmentation vs overhead
 
 4. **Conservative VLLM GPU memory utilization** ✅ OPTIMIZED
-   - Location: `src/auralis/models/xttsv2/XTTSv2.py:86-90`
+   - Location: `src/auralis/models/xttsv2/XTTSv2.py:90-92`
    - Impact: Better GPU utilization and higher concurrency capability
    - Solution: Increased default from 0.35 to 0.5 for modern GPUs
 

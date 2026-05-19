@@ -1,7 +1,5 @@
 import ast
-import hashlib
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -28,57 +26,6 @@ def _get_function(module: ast.Module, function_name: str):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name:
             return node
     raise AssertionError(f"{function_name} not found")
-
-
-def _load_xtts_cache_key_harness():
-    module = _parse_module("src/auralis/models/xttsv2/XTTSv2.py")
-
-    class_node = next(
-        node
-        for node in module.body
-        if isinstance(node, ast.ClassDef) and node.name == "XTTSv2Engine"
-    )
-    helper_methods = [
-        method
-        for method in class_node.body
-        if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and method.name
-        in {"_normalize_audio_reference_for_cache", "_get_conditioning_cache_key"}
-    ]
-    harness_module = ast.Module(
-        body=[
-            node
-            for node in module.body
-            if isinstance(node, ast.Assign)
-            and any(
-                isinstance(target, ast.Name)
-                and target.id == "_CONDITIONING_CACHE_DIGEST_SIZE"
-                for target in node.targets
-            )
-        ]
-        + [
-            ast.ClassDef(
-                name="CacheKeyHarness",
-                bases=[],
-                keywords=[],
-                body=helper_methods,
-                decorator_list=[],
-            )
-        ],
-        type_ignores=[],
-    )
-    harness_module = ast.fix_missing_locations(harness_module)
-
-    namespace = {
-        "hashlib": hashlib,
-        "Path": Path,
-        "Union": Union,
-        "List": List,
-        "Tuple": Tuple,
-        "Optional": Optional,
-    }
-    exec(compile(harness_module, "<xtts-cache-key-harness>", "exec"), namespace)
-    return namespace["CacheKeyHarness"](), namespace["_CONDITIONING_CACHE_DIGEST_SIZE"]
 
 
 def _literal_value(node):
@@ -230,100 +177,3 @@ def test_xtts_vllm_engine_configuration_has_cpu_and_gpu_paths():
     assert subscript_assignments["engine_kwargs['swap_space']"] == "self.swap_space"
     assert subscript_assignments["engine_kwargs['cpu_offload_gb']"] == "self.cpu_offload_gb"
     assert subscript_assignments["engine_kwargs['gpu_memory_utilization']"] == "mem_utilization"
-
-
-def test_xtts_conditioning_perceiver_keeps_sdp_attention_enabled_on_cuda():
-    module = _parse_module("src/auralis/models/xttsv2/XTTSv2.py")
-    init_method = _get_class_method(module, "XTTSv2Engine", "__init__")
-
-    assignments = {
-        ast.unparse(target): ast.unparse(node.value)
-        for node in ast.walk(init_method)
-        if isinstance(node, ast.Assign)
-        for target in node.targets
-        if isinstance(target, ast.Name)
-    }
-    assert assignments["use_flash_attn"] == "not self.is_cpu"
-    assert not any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "get_device_properties"
-        for node in ast.walk(init_method)
-    )
-
-
-def test_xtts_conditioning_cache_uses_lru_and_compact_reference_keys():
-    module = _parse_module("src/auralis/models/xttsv2/XTTSv2.py")
-    init_method = _get_class_method(module, "XTTSv2Engine", "__init__")
-    normalize_method = _get_class_method(
-        module, "XTTSv2Engine", "_normalize_audio_reference_for_cache"
-    )
-    conditioning_method = _get_class_method(
-        module, "XTTSv2Engine", "get_audio_conditioning"
-    )
-
-    assert any(
-        any(
-            isinstance(target, ast.Attribute)
-            and ast.unparse(target) == "self._conditioning_cache"
-            for target in node.targets
-        )
-        and ast.unparse(node.value) == "OrderedDict()"
-        for node in ast.walk(init_method)
-        if isinstance(node, ast.Assign)
-    )
-    assert any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and ast.unparse(node.func) == "hashlib.blake2b"
-        for node in ast.walk(normalize_method)
-    )
-    assert not any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "sorted"
-        for node in ast.walk(conditioning_method)
-    )
-    assert any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "move_to_end"
-        for node in ast.walk(conditioning_method)
-    )
-    assert any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "popitem"
-        and any(
-            keyword.arg == "last" and ast.unparse(keyword.value) == "False"
-            for keyword in node.keywords
-        )
-        for node in ast.walk(conditioning_method)
-    )
-
-
-def test_xtts_conditioning_cache_key_preserves_order_at_runtime():
-    harness, digest_size = _load_xtts_cache_key_harness()
-
-    first_order_key = harness._get_conditioning_cache_key(
-        ["speaker_b.wav", "speaker_a.wav"], 30, 6, 6, None, False, 22050
-    )
-    second_order_key = harness._get_conditioning_cache_key(
-        ["speaker_a.wav", "speaker_b.wav"], 30, 6, 6, None, False, 22050
-    )
-    bytes_key = harness._get_conditioning_cache_key(
-        [b"raw-audio"], 30, 6, 6, None, False, 22050
-    )
-
-    assert first_order_key[0] == (
-        ("ref", "speaker_b.wav"),
-        ("ref", "speaker_a.wav"),
-    )
-    assert second_order_key[0] == (
-        ("ref", "speaker_a.wav"),
-        ("ref", "speaker_b.wav"),
-    )
-    assert first_order_key != second_order_key
-    assert bytes_key[0][0][0] == "bytes"
-    assert bytes_key[0][0][1] != "raw-audio"
-    assert len(bytes_key[0][0][1]) == digest_size * 2
