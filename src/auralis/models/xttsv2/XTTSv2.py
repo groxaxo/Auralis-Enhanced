@@ -921,21 +921,16 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
     ) -> torch.Tensor:
         """Get model logits for token generation.
 
+        Executes a single token generation pass through the GPT model to collect
+        hidden states for the given token sequence and conditioning.
+
         Args:
             token_ids (List[int]): Input token IDs.
             conditioning (MultiModalDataDict): Conditioning data.
             request_id (str): Unique request identifier.
 
         Returns:
-            torch.Tensor: Model logits.
-        """
-        """
-        Get model logits for a request with retry logic for empty hidden states.
-
-        Args:
-            token_ids: Input token IDs
-            conditioning: Conditioning data
-            request_id: Unique request ID
+            torch.Tensor: Model logits (normalized hidden states).
         """
         request_id = f"{request_id}_logits"
 
