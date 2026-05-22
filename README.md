@@ -34,19 +34,33 @@
 ### End-to-end throughput on RTX 5080 Laptop (Blackwell SM 12.0, 16 GiB)
 
 Measured with `scripts/benchmark.py` on an idle GPU; the 64 short
-sentences total ~18 minutes of synthesized speech.
+sentences total ~11 minutes of synthesized speech.
 
 | Configuration | Audio | Wall | RTF | Realtime |
 | :--- | ---: | ---: | ---: | ---: |
-| Serial baseline | 268 s | 125 s | 0.468x | 2.14x |
-| Concurrent, conc=8, n=16 | 282 s | 27.2 s | 0.096x | 10.4x |
-| Concurrent, conc=16, n=32 | 568 s | 38.4 s | 0.068x | 14.8x |
-| Concurrent, conc=32, n=64 | 1103 s | 57.7 s | 0.052x | 19.1x |
-| Concurrent, conc=64, n=64 | 1103 s | 48.9 s | **0.044x** | **22.6x** |
+| Serial baseline, n=16 | 166 s | 26.7 s | 0.161x | 6.2x |
+| Concurrent, conc=8, n=16 | 161 s | 8.7 s | 0.054x | 18.6x |
+| Concurrent, conc=16, n=32 | 336 s | 15.1 s | 0.045x | 22.3x |
+| Concurrent, conc=32, n=64 | 628 s | 22.9 s | 0.036x | 27.5x |
+| Concurrent, conc=64, n=64 | 670 s | 23.0 s | **0.034x** | **29.2x** |
 
 > [!TIP]
 > Use `python scripts/benchmark.py --conc 32 --n 64 --no-serial` to
 > reproduce the throughput numbers on your own GPU.
+
+> [!NOTE]
+> Numbers updated after fixes for two latent regressions on
+> vLLM 0.10's V0 engine: (1) the default `cpu_offload_gb=8.0` was
+> silently offloading the entire GPT decoder to CPU and round-tripping
+> per-decode-step transfers through `functional_call`, and (2) the
+> decode forward path embedded the placeholder `input_ids` instead of
+> using the `inputs_embeds` that vLLM precomputes from each sampled
+> token under `enable_prompt_embeds=True`. Both fixes ship in commits
+> [`9403ff7`](https://github.com/akumaburn/Auralis-Enhanced-Blackwell/commit/9403ff7)
+> and [`d9a3d75`](https://github.com/akumaburn/Auralis-Enhanced-Blackwell/commit/d9a3d75).
+> Audio totals shrank ~40% because the model now generates the prompt
+> sentence and stops, rather than rambling on uncorrelated mel tokens
+> until a random EOS sample.
 
 ### NovaSR super-resolution overhead
 
