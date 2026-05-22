@@ -2,6 +2,43 @@
 
 All notable changes to Auralis Enhanced will be documented in this file.
 
+## [2.1.1] - 2026-05-22
+
+### XTTS parity: seed / do_sample / length_penalty / speed
+
+Plumbs the four generation knobs upstream Coqui XTTS exposes but the
+original Auralis silently ignored. Verified bit-exact on RTX 5080.
+
+#### Added
+
+- **`TTSRequest.seed: Optional[int]`** — forwarded to
+  `vllm.SamplingParams.seed`. Two runs with the same seed, speaker
+  reference and text now produce byte-identical waveforms
+  (SHA-1 verified).
+- **`TTSRequest.speed: float = 1.0`** — pitch-preserving phase-vocoder
+  time stretch (`librosa.effects.time_stretch`) applied to the HiFiGAN
+  output before any NovaSR upsampling. Output duration scales as
+  `1 / speed` (validated at speed=0.75 → 1.333× duration, speed=1.5 →
+  0.667× duration). Rejects `speed <= 0` with a `ValueError`.
+- **`LogitsLengthPenalizer`** — sampling-time emulation of HuggingFace's
+  beam-search `length_penalty`. Biases the mel-EOS logit by
+  `(1 − length_penalty) * sqrt(n + 1)` so `length_penalty > 1.0` yields
+  longer audio, `< 1.0` shorter, and `== 1.0` is a no-op. Empirical
+  ordering on a 12-word sentence: lp=0.3 → 2.87 s, lp=1.0 → 14.76 s,
+  lp=3.0 → 28.10 s.
+
+#### Changed
+
+- **`do_sample=False` now actually decodes greedily** — `_build_sampling_params`
+  forces `temperature=0`, `top_k=1`, `top_p=1.0` on greedy mode. Two
+  greedy runs produce byte-identical waveforms without needing `seed`.
+- **`TTSRequest.copy()`** now propagates `seed`, `speed`, and
+  `apply_novasr` (the last was previously dropped).
+- **`_build_logits_prompt_embeds`** clamps wpe lookups when generation
+  approaches `gpt_max_audio_tokens`; the trailing positions are sliced
+  off downstream so a clamped lookup is safe and avoids the assertion
+  failure that long-output requests could otherwise trip.
+
 ## [2.1.0] - 2026-05-22
 
 ### Blackwell (RTX 50-series) Port

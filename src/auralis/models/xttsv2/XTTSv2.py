@@ -42,7 +42,10 @@ from .config.tokenizer import XTTSTokenizerFast
 from .config.xttsv2_config import XTTSConfig
 from .config.xttsv2_gpt_config import XTTSGPTConfig
 
-from .components.vllm.hijack import LogitsRepetitionPenalizer
+from .components.vllm.hijack import (
+    LogitsLengthPenalizer,
+    LogitsRepetitionPenalizer,
+)
 from .components.tts.layers.xtts.hifigan_decoder import HifiDecoder
 from .components.tts.layers.xtts.latent_encoder import ConditioningEncoder
 from .components.tts.layers.xtts.perceiver_encoder import PerceiverResampler
@@ -605,6 +608,13 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
         audio_positions = torch.arange(
             len(full_ids), dtype=torch.long, device=device)
+        # When generation reaches close to ``gpt_max_audio_tokens`` the
+        # trailing ``[mel_bos | tokens | mel_eos*4]`` positions can exceed
+        # the learned wpe table (sized ``max_audio_tokens + 3``). Those
+        # trailing positions are sliced off in ``get_model_logits`` via
+        # ``[start_of_audio_hs:-5]``, so a clamped wpe lookup for them is
+        # safe — the hidden states they contribute are discarded.
+        audio_positions = torch.clamp(audio_positions, max=gpt.wpe.seq_len - 1)
         pos_embeds = gpt.wpe.get_fixed_embedding(
             audio_positions, device).view(token_embeds.shape).to(dtype)
 
@@ -1235,21 +1245,54 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             XttsGPT.unregister_request(request_id)
 
     def _build_sampling_params(self, request: TTSRequest) -> SamplingParams:
-        """Build per-chunk sampling params for the autoregressive pass."""
+        """Build per-chunk sampling params for the autoregressive pass.
+
+        Honours every generation knob exposed on ``TTSRequest``:
+
+        * ``temperature`` / ``top_p`` / ``top_k`` are forwarded directly.
+        * ``do_sample=False`` switches the sampler to greedy by forcing
+          ``temperature=0`` and ``top_k=1`` (vLLM's greedy convention).
+        * ``seed`` is forwarded to ``SamplingParams.seed`` so the mel-token
+          stream is reproducible for a given (text, speaker, params) tuple.
+        * ``repetition_penalty`` is applied via our custom
+          :class:`LogitsRepetitionPenalizer` (which can see the prompt
+          tokens, unlike vLLM's built-in scalar penalty).
+        * ``length_penalty`` is emulated via
+          :class:`LogitsLengthPenalizer` because vLLM does not expose
+          beam-search; the processor is a no-op when ``length_penalty == 1.0``.
+        """
+        if request.do_sample:
+            temperature = request.temperature
+            top_k = request.top_k
+            top_p = request.top_p
+        else:
+            # Greedy decoding: vLLM treats temperature=0 as argmax. We also
+            # collapse top_k/top_p to their no-op-for-greedy values.
+            temperature = 0.0
+            top_k = 1
+            top_p = 1.0
+
+        logits_processors = [
+            LogitsRepetitionPenalizer(request.repetition_penalty),
+        ]
+        if request.length_penalty != 1.0:
+            logits_processors.append(
+                LogitsLengthPenalizer(request.length_penalty,
+                                      eos_token_id=self.mel_eos_token_id))
+
         return SamplingParams(
-            temperature=request.temperature,
-            top_p=request.top_p,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            seed=request.seed,
             detokenize=False,
-            top_k=request.top_k,
-            logits_processors=[
-                LogitsRepetitionPenalizer(request.repetition_penalty)
-            ],
-            # We handle repetition penalty manually so the built-in stays at
-            # its no-op value.
+            logits_processors=logits_processors,
+            # We handle repetition penalty manually so the built-in stays
+            # at its no-op value.
             repetition_penalty=1.0,
             max_tokens=self.gpt_config.gpt_max_audio_tokens,
-            # The textual tokenizer's EOS is meaningless during audio token
-            # generation; rely on the mel EOS token instead.
+            # The textual tokenizer's EOS is meaningless during audio
+            # token generation; rely on the mel EOS token instead.
             ignore_eos=True,
             stop_token_ids=[self.mel_eos_token_id],
             output_kind=RequestOutputKind.FINAL_ONLY,
@@ -1300,6 +1343,13 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                         wav = wav_tensor.detach().cpu().numpy().squeeze()
                         del wav_tensor
                         del hidden_states
+
+                # Per-utterance speed control via pitch-preserving phase
+                # vocoder. Done before NovaSR so the 48 kHz output also
+                # respects the requested rate.
+                if request.speed != 1.0:
+                    wav = librosa.effects.time_stretch(
+                        wav.astype(np.float32), rate=float(request.speed))
 
                 # Create the audio output
                 tts_output = TTSOutput(

@@ -187,6 +187,43 @@ enhanced = output.apply_super_resolution()
 print(f"Enhanced rate: {enhanced.sample_rate}")  # 48000
 ```
 
+### 4. Reproducible / styled generation
+
+`TTSRequest` exposes the same generation knobs upstream Coqui XTTS does:
+
+| Field | Default | Effect |
+| :--- | :--- | :--- |
+| `seed` | `None` | When set, makes the autoregressive sampler deterministic; identical `(text, speaker, seed)` yields a byte-identical waveform. |
+| `do_sample` | `True` | `False` switches to greedy decoding (`temperature=0`, `top_k=1`), also fully deterministic. |
+| `temperature`, `top_p`, `top_k` | `0.75 / 0.85 / 50` | Standard sampling knobs, forwarded to vLLM's sampler. |
+| `repetition_penalty` | `5.0` | Penalises tokens already in the prompt or generated so far (see `LogitsRepetitionPenalizer`). |
+| `length_penalty` | `1.0` | Biases the mel-EOS logit by `(1 − length_penalty) * sqrt(n + 1)`. `> 1.0` yields longer audio, `< 1.0` shorter. |
+| `speed` | `1.0` | Pitch-preserving time stretch on the HiFiGAN output. `1.5` is 1.5× faster, `0.75` is slower. |
+| `apply_novasr` | `False` | 16 → 48 kHz NovaSR super-resolution. |
+
+```python
+# Deterministic generation
+request = TTSRequest(
+    text="The same seed produces the same waveform.",
+    speaker_files=['reference.wav'],
+    seed=42,
+)
+
+# Greedy decoding
+request = TTSRequest(
+    text="No sampling randomness here.",
+    speaker_files=['reference.wav'],
+    do_sample=False,
+)
+
+# Slow down the output (pitch preserved)
+request = TTSRequest(
+    text="Read this slowly.",
+    speaker_files=['reference.wav'],
+    speed=0.75,
+)
+```
+
 ---
 
 ## 📈 Throughput benchmark

@@ -206,6 +206,16 @@ class TTSRequest:
     repetition_penalty: float = 5.0
     length_penalty: float = 1.0
     do_sample: bool = True
+    # Reproducible sampling. When ``seed`` is set, it is forwarded to
+    # ``vllm.SamplingParams.seed`` so the autoregressive mel-token sampler
+    # is deterministic for a given (text, speaker_files, generation params)
+    # tuple. The speaker conditioning path is already deterministic.
+    seed: Optional[int] = None
+    # Per-utterance speech rate. 1.0 is natural pace; >1.0 speeds the
+    # audio up, <1.0 slows it down. Implemented as a pitch-preserving
+    # phase-vocoder time stretch on the HiFiGAN output, applied before
+    # any super-resolution stage. Must be > 0.
+    speed: float = 1.0
 
     # Audio super-resolution (NovaSR)
     apply_novasr: bool = False  # Disable NovaSR by default for compatibility
@@ -219,6 +229,9 @@ class TTSRequest:
             self.language = get_language(self.text)
 
         validate_language(self.language)
+        if self.speed <= 0:
+            raise ValueError(
+                f"TTSRequest.speed must be positive, got {self.speed}")
         self.processor = EnhancedAudioProcessor(self.audio_config)
         if isinstance(self.speaker_files, list) and self.enhance_speech:
             self.speaker_files = [
@@ -301,6 +314,9 @@ class TTSRequest:
             "repetition_penalty": self.repetition_penalty,
             "length_penalty": self.length_penalty,
             "do_sample": self.do_sample,
+            "seed": self.seed,
+            "speed": self.speed,
+            "apply_novasr": self.apply_novasr,
         }
 
         return TTSRequest(**copy_fields)
