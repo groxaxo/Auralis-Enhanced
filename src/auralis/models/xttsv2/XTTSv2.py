@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 import librosa
 import numpy as np
 import torch
+import torch.nn.functional as F
 import torchaudio
 from torch import nn
 
@@ -1349,6 +1350,33 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                     output.request_id,
                 )
 
+                # Per-utterance speed control via GPT-latent length
+                # rescaling, matching the upstream Coqui XTTS reference
+                # implementation
+                # (``TTS.tts.models.xtts.Xtts.inference`` lines 509 and
+                # 558-561 in TTS 0.22). XTTS was trained with the
+                # HiFiGAN decoder consuming time-coherent latents; the
+                # legitimate way to change rate is to stretch the latent
+                # sequence in time BEFORE the vocoder synthesises audio,
+                # so the vocoder produces a natively rate-adjusted
+                # waveform with intact phase. The previous Auralis
+                # implementation ran the vocoder at 1.0x and then fed
+                # the waveform to ``librosa.effects.time_stretch`` (a
+                # phase vocoder over the magnitude STFT), which always
+                # leaves audible phase-incoherence artefacts ("robotic"
+                # / "metallic" / "phasey" smear on vowels) at every
+                # speed other than 1.0. Latent interpolation has none
+                # of those.
+                if request.speed != 1.0:
+                    length_scale = 1.0 / max(float(request.speed), 0.05)
+                    if length_scale != 1.0:
+                        hidden_states = F.interpolate(
+                            hidden_states.transpose(1, 2),
+                            scale_factor=length_scale,
+                            mode="linear",
+                            align_corners=False,
+                        ).transpose(1, 2)
+
                 async with self.decoder_semaphore:
                     async with self.cuda_memory_manager():
                         wav_tensor = await asyncio.to_thread(
@@ -1359,13 +1387,6 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                         wav = wav_tensor.detach().cpu().numpy().squeeze()
                         del wav_tensor
                         del hidden_states
-
-                # Per-utterance speed control via pitch-preserving phase
-                # vocoder. Done before NovaSR so the 48 kHz output also
-                # respects the requested rate.
-                if request.speed != 1.0:
-                    wav = librosa.effects.time_stretch(
-                        wav.astype(np.float32), rate=float(request.speed))
 
                 # Create the audio output
                 tts_output = TTSOutput(
