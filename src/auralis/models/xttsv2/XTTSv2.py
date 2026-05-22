@@ -282,6 +282,18 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         # Key: normalized audio references + conditioning parameters.
         self._conditioning_cache = OrderedDict()
         self._conditioning_cache_lock = asyncio.Lock()
+        # Singleflight locks per conditioning-cache key. The
+        # encoder_semaphore below is a CAPACITY limit (max N concurrent
+        # conditioning computes for backpressure) but not a key-based
+        # mutex, so N concurrent requests with the SAME ``cache_key``
+        # were all able to pass the cache miss + semaphore acquire and
+        # then compute the latents in parallel -- 5 simultaneous
+        # perceiver-resampler passes over a 60 s reference reliably
+        # OOMs a 16 GiB GPU. With per-cache-key locks held during the
+        # compute, the first concurrent miss does the work and any
+        # siblings wake up, re-check the now-populated cache, and
+        # reuse the entry without any extra compute.
+        self._conditioning_inflight_locks: dict = {}
         self._max_cache_size = 100  # Limit cache size to prevent memory issues
         self._decode_counter_lock = asyncio.Lock()
         self._decode_counter = 0
@@ -1091,30 +1103,47 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         if cached_result is not None:
             return cached_result
 
-        async with self.encoder_semaphore:
-            # Double-check cache after acquiring semaphore (another coroutine might have populated it)
-            # Skip cache-hit logging here so requests that miss the first check do not
-            # emit duplicate log lines after waiting on the semaphore.
+        # Singleflight: per-cache-key lock prevents N concurrent
+        # requests with the same voice setup from each running the
+        # mel + perceiver-resampler conditioning compute in parallel.
+        # ``setdefault`` is race-free under asyncio's single-threaded
+        # execution -- there is no ``await`` between the get and the
+        # store.
+        inflight_lock = self._conditioning_inflight_locks.setdefault(
+            cache_key, asyncio.Lock())
+        async with inflight_lock:
+            # Recheck cache after acquiring the per-key lock; a
+            # sibling task may have just populated it.
             cached_result = await self._get_cached_conditioning_result(cache_key)
             if cached_result is not None:
+                # Drop the lock entry now that the cache hit will
+                # absorb all future requests for this key.
+                self._conditioning_inflight_locks.pop(cache_key, None)
                 return cached_result
 
-            # Run the original get_conditioning_latents in executor
-            result = await self.get_conditioning_latents(
-                audio_reference,
-                max_ref_length,
-                gpt_cond_len,
-                gpt_cond_chunk_len,
-                librosa_trim_db,
-                sound_norm_refs,
-                load_sr,
-            )
+            # encoder_semaphore enforces a global cap on concurrent
+            # conditioning computes (across DIFFERENT cache keys) so
+            # the GPU isn't oversubscribed by, say, two characters'
+            # voices loading at exactly the same moment.
+            async with self.encoder_semaphore:
+                result = await self.get_conditioning_latents(
+                    audio_reference,
+                    max_ref_length,
+                    gpt_cond_len,
+                    gpt_cond_chunk_len,
+                    librosa_trim_db,
+                    sound_norm_refs,
+                    load_sr,
+                )
 
-            async with self._conditioning_cache_lock:
-                self._conditioning_cache[cache_key] = result
-                self._conditioning_cache.move_to_end(cache_key)
-                if len(self._conditioning_cache) > self._max_cache_size:
-                    self._conditioning_cache.popitem(last=False)
+                async with self._conditioning_cache_lock:
+                    self._conditioning_cache[cache_key] = result
+                    self._conditioning_cache.move_to_end(cache_key)
+                    if len(self._conditioning_cache) > self._max_cache_size:
+                        self._conditioning_cache.popitem(last=False)
+            # Release the in-flight slot after the cache is
+            # populated so waiters see the populated entry.
+            self._conditioning_inflight_locks.pop(cache_key, None)
             return result
 
     async def get_model_logits(
