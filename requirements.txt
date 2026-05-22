@@ -25,13 +25,15 @@ requests
 safetensors
 sounddevice
 soundfile
-spacy==3.7.5
+spacy>=3.8
 setuptools
 torchaudio
 tokenizers
 torch
 transformers
-vllm==0.6.4.post1
+vllm>=0.9.2
+transformers>=4.51,<4.55
 nvidia-ml-py
 numpy
-git+https://github.com/ysharma3501/FlashSR.git@6f90f8d  # FlashSR audio super-resolution (pinned to commit)
+# NovaSR (https://huggingface.co/YatharthS/NovaSR) is fetched lazily from the Hub
+# by auralis.common.enhancers.novasr; no separate pip dependency is required.
