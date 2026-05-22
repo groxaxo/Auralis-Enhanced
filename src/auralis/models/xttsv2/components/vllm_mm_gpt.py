@@ -273,7 +273,31 @@ class XttsGPT(nn.Module, SupportsPP):
                 # index it.
                 audio_positions = self._compute_decode_audio_positions(
                     positions, request_ids_to_seq_ids)
-                token_embeds = self.gpt.wte(input_ids)
+                # Source of the per-token embedding:
+                #   ``enable_prompt_embeds=True`` flips vLLM's V0
+                #   ``ModelRunner._compute_lens`` (worker/model_runner.py
+                #   line 517-523 in 0.10.0) into the "prompt_embeds"
+                #   branch, which fills ``inputs_embeds`` with
+                #   ``seq_data.get_token_embeddings()`` — the cached
+                #   embedding of every prompt token AND every previously
+                #   sampled output token (the sampler runs
+                #   ``self.model.get_input_embeddings(sampled_token_ids)``
+                #   per step and appends to that cache) — and replaces
+                #   ``input_ids`` with a placeholder of zeros. In that
+                #   regime the real per-step token embedding lives in
+                #   ``inputs_embeds``; doing ``self.gpt.wte(input_ids)``
+                #   would silently embed token id 0 every decode step and
+                #   ignore the sampled output, producing audio that is
+                #   uncorrelated with the text prompt (this was the
+                #   "English-shaped gibberish" failure mode). When
+                #   ``inputs_embeds`` is missing (older vLLM, or any code
+                #   path that does not opt into prompt_embeds), fall back
+                #   to the explicit wte lookup so this remains correct on
+                #   vllm < 0.10 / non-EmbedsPrompt callers.
+                if inputs_embeds is not None:
+                    token_embeds = inputs_embeds
+                else:
+                    token_embeds = self.gpt.wte(input_ids)
                 position_embeds = self.gpt.wpe.get_fixed_embedding(
                     audio_positions, input_ids.device).view(
                         token_embeds.shape)
