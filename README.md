@@ -258,6 +258,26 @@ python scripts/benchmark.py --conc 16 --n 16 --novasr
 The script prints a single line starting with `RESULT` per run, so it is
 easy to log or grep in CI.
 
+### Auto-concurrency
+
+`TTS()` and `TTS().from_pretrained(...)` both pick a sensible
+`max_concurrency` (and `scheduler_max_concurrency`) from your
+currently-free VRAM if you do not pass an explicit value:
+
+```python
+# Auto-detected; on a 16 GiB GPU this typically lands at 32.
+tts = TTS().from_pretrained("AstraMindAI/xttsv2",
+                            gpt_model="AstraMindAI/xtts2-gpt")
+```
+
+The formula divides the smaller of `gpu_memory_utilization *
+total_vram` and `free_vram − 3 GiB` (HiFiGAN + conditioning headroom)
+by the per-slot cost (~155 MiB at the XTTS GPT config), and clamps
+to `[1, 32]`. Lowering `gpu_memory_utilization` scales the suggestion
+down naturally; passing `max_concurrency` explicitly disables the
+auto-detect. See `auralis.common.utilities.suggest_max_concurrency`
+for the full memory model.
+
 ---
 
 ## 🚀 Docker GPU Deploy

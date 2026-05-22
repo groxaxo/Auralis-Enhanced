@@ -36,7 +36,8 @@ from ..base import (
 from ...common.logging.logger import setup_logger
 from ...common.definitions.output import TTSOutput
 from ...common.definitions.requests import TTSRequest
-from ...common.utilities import wav_to_mel_cloning, load_audio
+from ...common.utilities import (
+    wav_to_mel_cloning, load_audio, suggest_max_concurrency)
 
 from .components.vllm_mm_gpt import LearnedPositionEmbeddings, XttsGPT
 from .config.tokenizer import XTTSTokenizerFast
@@ -164,11 +165,30 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.tokenizer = XTTSTokenizerFast.from_pretrained(self.gpt_model)
         self.request_counter = Counter()
 
-        requested_concurrency = kwargs.pop("max_concurrency", 1)
+        # ``max_concurrency`` defaults to auto when unset or set to
+        # ``None``: we size it from the currently-free VRAM and the
+        # configured ``gpu_memory_utilization`` so a fresh install on
+        # a 16 GiB GPU does not silently run at concurrency 1 (the
+        # previous hard-coded default) and leave most of the engine
+        # idle. See :func:`auralis.common.utilities.suggest_max_concurrency`
+        # for the memory model and the empirical throughput curve that
+        # motivates the default cap. Explicit integer values still
+        # win, so existing call sites keep their old behaviour.
+        requested_concurrency = kwargs.pop("max_concurrency", None)
         self.is_cpu = self.device_map == "cpu" or (
             self.device_map == "auto" and not torch.cuda.is_available()
         )
-        self.max_concurrency = 1 if self.is_cpu else max(1, requested_concurrency)
+        if self.is_cpu:
+            self.max_concurrency = 1
+        elif requested_concurrency is None:
+            self.max_concurrency = suggest_max_concurrency(
+                self.gpu_memory_utilization)
+            self.logger.info(
+                "max_concurrency auto-detected from free VRAM: "
+                f"{self.max_concurrency} "
+                f"(gpu_memory_utilization={self.gpu_memory_utilization})")
+        else:
+            self.max_concurrency = max(1, int(requested_concurrency))
         semaphore_concurrency = (
             1 if self.is_cpu else max(1, self.max_concurrency // 6) * self.tp
         )
