@@ -127,7 +127,23 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         # Increased from 0.35 to 0.5 for better GPU utilization on modern GPUs
         # This allows more concurrent requests while still leaving headroom for decoder
         self.gpu_memory_utilization = kwargs.pop("gpu_memory_utilization", 0.5)
-        self.cpu_offload_gb = kwargs.pop("cpu_offload_gb", 8.0)
+        # ``cpu_offload_gb`` is the budget for vLLM's ``maybe_offload_to_cpu``
+        # helper (see vllm.model_executor.models.utils.make_layers, which
+        # wraps every transformer block with that helper). Anything > 0
+        # tells vLLM "offload up to N GB of layer weights to CPU and replace
+        # each layer's forward with a per-call ``functional_call`` that
+        # rehydrates the params on GPU per step". That path is intended for
+        # huge dense LLMs that do not fit on the GPU at all. The XTTS GPT
+        # decoder is ~0.76 GB in bfloat16 so the prior default of 8.0 GB
+        # silently offloaded ALL transformer blocks to CPU, and the
+        # functional_call shim does not preserve the vLLM ``Attention``
+        # layer's KV cache hookup correctly on V0 — generation runs but
+        # the per-step KV writes go to the CPU shadow of the params, so
+        # subsequent decode steps consume stale K/V and the audio output
+        # decorrelates from the text prompt. Default to 0.0 so the
+        # transformer blocks stay on GPU; operators with genuinely huge
+        # models can opt back in explicitly.
+        self.cpu_offload_gb = kwargs.pop("cpu_offload_gb", 0.0)
         self.swap_space = kwargs.pop("swap_space", 2.0)
         speaker_embedding_cache_size = kwargs.pop("speaker_embedding_cache_size", 100)
         try:
