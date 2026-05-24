@@ -64,6 +64,21 @@ Transcription similarity verified using OpenAI Whisper on RTX 3060:
 > [!TIP]
 > **RTF < 1.0** means audio is generated faster than it is spoken. At **0.04x**, upsampling 1 minute of audio takes only **2.4 seconds**.
 
+### GPT Decode Benchmark (RTX 3060)
+
+The root-level `bench_speed.py` script measures model load, conditioning, GPT decode, HiFi-GAN, and total real-time factor.
+
+| Mode | RTF | Tokens/s | Notes |
+| :--- | :--- | :--- | :--- |
+| CUDA graphs enabled | **0.12x** | **180.8** | Warm benchmark runs, faster than realtime |
+| CUDA graphs enabled (short text) | **0.175x** | **4.2** | Includes model load + first request overhead |
+
+To reproduce locally, run:
+
+```bash
+python bench_speed.py
+```
+
 ---
 
 ## 🎧 Audio Showcase

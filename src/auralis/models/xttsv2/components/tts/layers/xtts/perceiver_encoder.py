@@ -92,11 +92,12 @@ class Attend(nn.Module):
         if device_properties.major >= 8:
             # All Ampere (SM 8.0+) and newer GPUs (A100, A30, A10, A40, RTX 30xx/40xx series)
             # support the hardware flash-attention kernel efficiently.
+            # Allow math/mem-efficient as fallback for float32 inputs (flash attn requires fp16/bf16).
             print_once(
                 f"Ampere or newer GPU detected (SM {device_properties.major}.{device_properties.minor}), "
                 "using flash attention if input tensor is on cuda"
             )
-            self.cuda_config = self.config(True, False, False)
+            self.cuda_config = self.config(True, True, True)
         else:
             print_once(
                 f"Pre-Ampere GPU detected (SM {device_properties.major}.{device_properties.minor}), "

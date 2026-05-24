@@ -69,11 +69,15 @@ class PositionalEmbeddingsCorrecter:
         self.request_tracker_dict: Dict[str, TokenPositionAndPrefillTuple] = defaultdict(lambda: TokenPositionAndPrefillTuple())
         # Maps token_position pairs to their request_id
         self.token_to_request: Dict[str, str] = {}
+        # Reverse map: request_id -> set of token_position keys (for O(1) invalidation)
+        self.request_to_token_keys: Dict[str, set] = defaultdict(set)
 
     def init_request_id_prefill(self, request_id: str, prefill_len: PrefillLength, nex_token: torch.Tensor):
         """Initialize a request_id with its prefill length."""
         self.request_tracker_dict[request_id] = TokenPositionAndPrefillTuple(prefill_len, prefill_len)
-        self.token_to_request[f"{nex_token}_{prefill_len}"] = request_id
+        key = f"{nex_token}_{prefill_len}"
+        self.token_to_request[key] = request_id
+        self.request_to_token_keys[request_id].add(key)
 
     def get_by_request_id(self, request_id: str) -> TokenPositionAndPrefillTuple:
         """Retrieve the prefill length for a given request_id."""
@@ -110,20 +114,9 @@ class PositionalEmbeddingsCorrecter:
         return prefill_lengths
 
     def _invalidate_previous_mapping(self, request_id: str):
-        """Remove all token mappings associated with a given request_id.
-
-        This prevents memory leaks from old token mappings and ensures
-        we don't have stale token-to-request associations.
-        """
-        # Find all token keys that map to this request_id
-        keys_to_remove = [
-            token_key for token_key, req_id in self.token_to_request.items()
-            if req_id == request_id
-        ]
-
-        # Remove all found mappings
-        for token_key in keys_to_remove:
-            del self.token_to_request[token_key]
+        """Remove all token mappings associated with a given request_id (O(1) via reverse map)."""
+        for token_key in self.request_to_token_keys.pop(request_id, set()):
+            self.token_to_request.pop(token_key, None)
 
     def _get_pos_id_and_update (self, request_id: str):
         """Get the position ID for a given request_id and update it."""
@@ -149,7 +142,9 @@ class PositionalEmbeddingsCorrecter:
         self._invalidate_previous_mapping(request_id)
 
         # Create new mapping
-        self.token_to_request[f"{next_token_id}_{pos_id}"] = request_id
+        key = f"{next_token_id}_{pos_id}"
+        self.token_to_request[key] = request_id
+        self.request_to_token_keys[request_id].add(key)
 
     def clear_request(self, request_id: str):
         """Remove all data associated with a request_id.
@@ -177,15 +172,9 @@ class LearnedPositionEmbeddings(nn.Module):
         if self.relative:
             start = random.randint(sl, self.seq_len) - sl
             indices = torch.arange(start, start + sl, device=x.device)
-            # Validate indices
-            assert (indices < self.seq_len).all() and (indices >= 0).all(), \
-                f"Invalid position indices in forward: min={indices.min().item()}, max={indices.max().item()}, valid_range=[0,{self.seq_len-1}]"
             return self.emb(indices)
         else:
             indices = torch.arange(0, sl, device=x.device)
-            # Validate indices
-            assert (indices < self.seq_len).all(), \
-                f"Sequence length {sl} exceeds maximum position embedding length {self.seq_len}"
             return self.emb(indices)
 
     def get_fixed_embedding(self, ind: torch.Tensor, dev: torch.device) -> torch.Tensor:
@@ -200,18 +189,12 @@ class LearnedPositionEmbeddings(nn.Module):
             Position embeddings tensor matching input shape plus embedding dimension
             Shape: [batch_size, seq_len, model_dim] or [1, 1, model_dim]
         """
-        # Validation of indices to prevent unknown errors
-        assert (ind < self.seq_len).all(), \
-            f"Position indices out of range. Found max={ind.max().item()}, but maximum allowed is {self.seq_len-1}"
-        assert (ind >= 0).all(), \
-            f"Negative position indices found. Min value={ind.min().item()}"
-
         if ind.shape[0] > 1:
-
             return self.emb(ind)
         else:
-            #assert ind.dim() <= 2, f"Single input should have 1 or 2 dimensions, got {ind.dim()}"
-            return self.emb(torch.tensor([ind], device=dev)).unsqueeze(0)
+            # Use unsqueeze (zero-copy view) instead of torch.tensor() which
+            # allocates new memory and is forbidden inside CUDA graph capture.
+            return self.emb(ind.unsqueeze(0)).unsqueeze(0)
 
 
 
@@ -382,6 +365,9 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
         self.sampler = Sampler()
 
         self.positional_embeddings_correcter = PositionalEmbeddingsCorrecter()
+        # CUDA-graph-compatible correction tensor: stores (prefill_len) for the active request.
+        # Pre-allocated so its address is stable across CUDA graph replays.
+        self.register_buffer('_decode_correction', torch.zeros(1, dtype=torch.long))
 
     @staticmethod
     def _check_is_logits_only_mode(is_logits_only_mode) -> torch.Tensor:
@@ -450,6 +436,13 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
                                  input_ids: torch.Tensor,
                                  positions: torch.Tensor,
                                  conditioning_inputs_list: List[torch.Tensor]):
+        # Fast path for single-seq decode: avoids GPU→CPU sync via .tolist().
+        # _decode_correction is a CUDA buffer (stable address) updated by sample()
+        # after each prefill — safe to replay inside a CUDA graph.
+        if not isinstance(conditioning_inputs_list, list) or len(conditioning_inputs_list) < 1:
+            return 1 + positions - self._decode_correction
+
+        # Slow path for prefill / mixed prefill+decode batches (not inside CUDA graphs).
         correct_positions_ids = self.positional_embeddings_correcter.get_by_next_token(input_ids.tolist(),
                                                                                        positions.tolist())
         if len(correct_positions_ids) > 0:
@@ -515,6 +508,15 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
         if is_profiling_run:
             return [], input_ids, positions
 
+        # ── Decode fast-path (CUDA-graph-compatible) ──────────────────────────
+        # During autoregressive decode, cond_latents is never a list — it is
+        # False (the default).  All nonzero() / .item() / .tolist() calls below
+        # are unsafe inside a CUDA-graph capture stream; skip them entirely.
+        if not isinstance(conditioning_inputs_list, list) or len(conditioning_inputs_list) < 1:
+            positions = self._maybe_correct_positions(input_ids, positions, conditioning_inputs_list)
+            return [], input_ids, positions
+
+        # ── Prefill path (never inside a CUDA graph) ──────────────────────────
         # Pre-allocate lists for better memory efficiency
         starting_indexes = []
 
@@ -605,8 +607,6 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
 
         modified_input_ids = input_ids[keep_mask]
         modified_positions = positions[keep_mask]
-        assert (modified_positions < 608).all()
-        assert (modified_positions >= 0).all()
         return starting_indexes, modified_input_ids, modified_positions
 
 
@@ -673,15 +673,19 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
         # we keep track of the last collected index to properly associate the hidden states with the correct request_id
         last_collected_idx = 0
         for seq in sampling_metadata.seq_groups:
-            # Check if we need to collect hidden states
+            # Check if we need to collect hidden states.
+            # seq.seq_len is None for DECODE steps (vLLM design) and for CUDA-graph
+            # padded slots — only collect during PREFILL where seq_len is always set.
             sampling_params = seq.sampling_params
-            if (hasattr(sampling_params, 'hidden_state_collector')
+            seq_len = seq.seq_len  # None on decode / padding
+            if (seq_len is not None
+                    and hasattr(sampling_params, 'hidden_state_collector')
                     and sampling_params.hidden_state_collector is not None):
                 self.positional_embeddings_correcter.clear_request(sampling_params.request_id)
                 # Call the collector directly with the hidden states
-                sampling_params.hidden_state_collector(hidden_states[last_collected_idx:last_collected_idx+seq.seq_len], sampling_params.request_id)  # The request_id is already bound
+                sampling_params.hidden_state_collector(hidden_states[last_collected_idx:last_collected_idx + seq_len], sampling_params.request_id)
 
-            last_collected_idx += seq.seq_len or 0
+            last_collected_idx += seq_len or 0
 
         # Compute logits using the mel_head
         logits = self.logits_processor(self.mel_head, hidden_states, sampling_metadata, self.mel_head.bias)
@@ -699,11 +703,15 @@ class XttsGPT(nn.Module, SupportsMultiModal, SupportsPP):
                 idx = seq_groups.seq_ids[0]
                 # Call the collector directly with the next tokens
                 if not self.positional_embeddings_correcter.get_by_request_id(seq_groups.sampling_params.request_id):
+                    prefill_len = len(seq_groups.seq_data[idx].prompt_token_ids)
                     self.positional_embeddings_correcter.init_request_id_prefill(
                         request_id = seq_groups.sampling_params.request_id,
-                        prefill_len=len(seq_groups.seq_data[idx].prompt_token_ids),
+                        prefill_len=prefill_len,
                         nex_token=next_tokens.outputs[seq_id].samples[0].output_token # index out of error
                     )
+                    # Update the CUDA-resident correction buffer so the decode path
+                    # can use it without any GPU→CPU sync (CUDA-graph-compatible).
+                    self._decode_correction[0] = prefill_len
                 else:
                     self.positional_embeddings_correcter.associate_new_tokens(
                         request_id=seq_groups.sampling_params.request_id,

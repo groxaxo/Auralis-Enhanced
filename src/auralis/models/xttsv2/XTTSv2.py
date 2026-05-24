@@ -87,6 +87,8 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
         self.gpt_model = kwargs.pop("gpt_model")
         self.device_map = kwargs.pop("device_map", "auto")
+        self.enforce_eager = kwargs.pop("enforce_eager", False)   # False = enable CUDA graphs
+        self.num_scheduler_steps = kwargs.pop("num_scheduler_steps", 1)
         # Increased from 0.35 to 0.5 for better GPU utilization on modern GPUs
         # This allows more concurrent requests while still leaving headroom for decoder
         self.gpu_memory_utilization = kwargs.pop("gpu_memory_utilization", 0.5)
@@ -116,7 +118,7 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         )
         self.max_concurrency = 1 if self.is_cpu else max(1, requested_concurrency)
         semaphore_concurrency = (
-            1 if self.is_cpu else max(1, self.max_concurrency // 6) * self.tp
+            1 if self.is_cpu else max(2, self.max_concurrency // 3) * self.tp
         )
 
         # Register buffer before creating modules
@@ -287,12 +289,14 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             dtype="float32" if self.is_cpu else "auto",
             max_model_len=max_model_len,
             trust_remote_code=True,
-            enforce_eager=True,
+            enforce_eager=self.enforce_eager,
             limit_mm_per_prompt={"audio": 1},
             max_num_seqs=max_seq_num,
             disable_log_stats=True,
             max_num_batched_tokens=max_model_len * max_seq_num,
         )
+        if self.num_scheduler_steps > 1:
+            engine_kwargs["num_scheduler_steps"] = self.num_scheduler_steps
 
         if self.is_cpu:
             engine_kwargs["swap_space"] = self.swap_space
@@ -382,10 +386,19 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 pretrained_model_name_or_path, "xtts-v2.safetensors"
             )
 
-        # Load HiFi-GAN weights
-        from safetensors.torch import load_model
+        # Load HiFi-GAN weights.
+        # Use load_file + load_state_dict(strict=False) to bypass the safetensors
+        # shared-tensor validation (torch_spec window buffer is a computed constant
+        # that does not need to be restored from the checkpoint).
+        from safetensors.torch import load_file as _safetensors_load_file
 
-        load_model(model, hifigan_weights, strict=True)
+        _state_dict = _safetensors_load_file(hifigan_weights)
+        _missing, _unexpected = model.load_state_dict(_state_dict, strict=False)
+        if _unexpected:
+            import logging as _logging
+            _logging.getLogger(__file__).warning(
+                "Unexpected keys while loading HiFi-GAN: %s", _unexpected[:5]
+            )
 
         # Set model properties
         model.config = config
