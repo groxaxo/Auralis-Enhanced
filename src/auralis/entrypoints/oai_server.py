@@ -87,9 +87,9 @@ async def ensure_tts_engine(args=None) -> TTS:
                         gpt_model="AstraMindAI/xtts2-gpt",
                         max_concurrency=1,
                         device="auto",
-                        gpu_memory_utilization=0.35,
-                        cpu_offload_gb=8.0,
-                        swap_space=2.0,
+                        gpu_memory_utilization=0.65,
+                        cpu_offload_gb=0.0,
+                        swap_space=0.0,
                         vllm_logging_level="warn",
                     )
 
@@ -529,19 +529,19 @@ def main():
     parser.add_argument(
         "--gpu_memory_utilization",
         type=float,
-        default=0.35,
+        default=0.65,
         help="Fraction of GPU memory reserved by vLLM",
     )
     parser.add_argument(
         "--cpu_offload_gb",
         type=float,
-        default=8.0,
+        default=0.0,
         help="CPU offload in GiB per GPU for vLLM",
     )
     parser.add_argument(
         "--swap_space",
         type=float,
-        default=2.0,
+        default=0.0,
         help="CPU swap space in GiB per GPU for vLLM",
     )
     parser.add_argument(

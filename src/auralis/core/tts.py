@@ -106,7 +106,9 @@ class TTS:
 
         # Run potential async operations within from_pretrained in the event loop
         async def _load_model():
-            return MODEL_REGISTRY[config['model_type']].from_pretrained(model_name_or_path, **kwargs)
+            # coqui config.json uses "model" key; HF configs use "model_type"
+            model_type = config.get('model_type') or config.get('model', 'xtts')
+            return MODEL_REGISTRY[model_type].from_pretrained(model_name_or_path, **kwargs)
 
         self.tts_engine = self.loop.run_until_complete(_load_model()) # to start form the correct loop
 

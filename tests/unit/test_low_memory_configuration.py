@@ -3,9 +3,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_GPU_MEMORY_UTILIZATION = 0.35
-DEFAULT_CPU_OFFLOAD_GB = 8.0
-DEFAULT_SWAP_SPACE = 2.0
+DEFAULT_GPU_MEMORY_UTILIZATION = 0.65
+DEFAULT_CPU_OFFLOAD_GB = 0.0
+DEFAULT_SWAP_SPACE = 0.0
 
 
 def _parse_module(relative_path: str) -> ast.Module:
