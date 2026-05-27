@@ -15,6 +15,7 @@ from auralis.common.definitions.output import TTSOutput
 from auralis.common.definitions.requests import TTSRequest
 from auralis.common.metrics.performance import track_generation
 from auralis.common.scheduling.two_phase_scheduler import TwoPhaseScheduler
+from auralis.common.utilities import suggest_max_concurrency
 from auralis.models.base import BaseAsyncTTSEngine, AudioOutputGenerator
 
 class TTS:
@@ -24,20 +25,43 @@ class TTS:
     with support for streaming output and parallel processing of multiple requests.
     """
 
-    def __init__(self, scheduler_max_concurrency: int = 1, vllm_logging_level=logging.DEBUG):
+    def __init__(self,
+                 scheduler_max_concurrency: Optional[int] = None,
+                 vllm_logging_level=logging.DEBUG):
         """Initialize the TTS engine.
 
         Args:
-            scheduler_max_concurrency (int): Maximum number of concurrent requests to process.
+            scheduler_max_concurrency: Maximum number of concurrent
+                requests the two-phase scheduler will dispatch to the
+                underlying engine. ``None`` (the default) auto-detects
+                a sensible value from the currently-free VRAM and
+                stays in lockstep with the model's vLLM
+                ``max_concurrency`` (both go through
+                :func:`auralis.common.utilities.suggest_max_concurrency`).
+                Pass an explicit integer to opt out of auto-detection.
             vllm_logging_level: Logging level for the VLLM backend.
         """
         set_vllm_logging_level(vllm_logging_level)
 
+        self.logger = setup_logger(__file__)
+        if scheduler_max_concurrency is None:
+            # We pick the same default the model would pick, so the
+            # scheduler can't become the limiting factor by accident.
+            # ``gpu_memory_utilization`` is not known at TTS()
+            # construction time (it's set on from_pretrained), so we
+            # use the engine's default of 0.5 -- if the operator later
+            # passes a different util to from_pretrained the model
+            # will recompute its own max_concurrency; the scheduler
+            # value is only ever an UPPER bound on dispatch, so being
+            # slightly higher than the engine's is fine.
+            scheduler_max_concurrency = suggest_max_concurrency(0.5)
+            self.logger.info(
+                "scheduler_max_concurrency auto-detected from free "
+                f"VRAM: {scheduler_max_concurrency}")
         self.scheduler: Optional[TwoPhaseScheduler] = TwoPhaseScheduler(scheduler_max_concurrency)
         self.tts_engine: Optional[BaseAsyncTTSEngine] = None
         self.concurrency = scheduler_max_concurrency
         self.max_vllm_memory: Optional[int] = None
-        self.logger = setup_logger(__file__)
         self.loop = None
 
     def _ensure_event_loop(self):

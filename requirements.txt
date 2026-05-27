@@ -1,5 +1,18 @@
+# Auralis Enhanced runtime requirements (Blackwell port, vLLM 0.9.2).
+#
+# IMPORTANT: install the GPU-flavoured `torch` first, otherwise pip may
+# pull a CPU-only wheel from PyPI and Blackwell GPUs will fail to run
+# kernels. See INSTALL.md for the per-GPU instructions; on RTX 50xx run
+# the following BEFORE `pip install -r requirements.txt`:
+#
+#     pip install --index-url https://download.pytorch.org/whl/cu128 \
+#         torch==2.7.0 torchaudio==2.7.0 torchvision==0.22.0
+#
+# `vllm==0.9.2` pins `torch==2.7.0` / `torchaudio==2.7.0`, so we do not
+# list them again here — pip will accept whichever local version
+# (`+cu128`, `+cu124`, `+cpu`) is already installed.
+
 aiofiles
-langid
 beautifulsoup4
 cachetools
 colorama
@@ -12,26 +25,30 @@ gradio>=4.0.0
 hangul_romanize
 huggingface_hub
 ipython
+langid
 librosa
 networkx
 num2words
+numpy>=2.0
+nvidia-ml-py
 openai>=1.0.0
 opencc
 packaging
 pyloudnorm
-pytest
 pypinyin
+pytest
 requests
 safetensors
+setuptools
 sounddevice
 soundfile
-spacy==3.7.5
-setuptools
-torchaudio
+spacy>=3.8
 tokenizers
-torch
-transformers
-vllm==0.6.4.post1
-nvidia-ml-py
-numpy
-git+https://github.com/ysharma3501/FlashSR.git@6f90f8d  # FlashSR audio super-resolution (pinned to commit)
+transformers>=4.51,<4.55
+vllm>=0.9.2
+
+# NovaSR (https://huggingface.co/YatharthS/NovaSR) is optional: the
+# weights are fetched lazily from the Hub when `apply_novasr=True` on a
+# request. Install via:
+#
+#     pip install git+https://github.com/ysharma3501/NovaSR.git

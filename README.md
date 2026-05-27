@@ -5,12 +5,12 @@
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![GitHub](https://img.shields.io/badge/GitHub-Auralis--Enhanced-blue.svg)](https://github.com/groxaxo/Auralis-Enhanced)
+[![GitHub](https://img.shields.io/badge/GitHub-Auralis--Enhanced-blue.svg)](https://github.com/akumaburn/Auralis-Enhanced-Blackwell)
 [![NovaSR](https://img.shields.io/badge/Audio-48kHz%20NovaSR-brightgreen.svg)](https://huggingface.co/YatharthS/NovaSR)
 
-**Process an entire novel in minutes, not hours. Convert books to speech with professional 48kHz audio quality powered by NovaSR!**
+**Process an entire novel in minutes, not hours. Convert books to speech with professional 48kHz audio quality powered by NovaSR — now running natively on Blackwell (RTX 50-series) GPUs.**
 
-[Quick Start](#quick-start-) • [Docker GPU Deploy](#-docker-gpu-deploy) • [Features](#key-features-) • [Performance](#-performance--benchmarks) • [Credits](#-acknowledgments)
+[Quick Start](#quick-start-) • [Blackwell Notes](#-blackwell-rtx-50-series-support) • [Benchmark](#-throughput-benchmark) • [Docker GPU Deploy](#-docker-gpu-deploy) • [Features](#key-features-) • [Performance](#-performance--benchmarks) • [Credits](#-acknowledgments)
 
 </div>
 
@@ -31,7 +31,38 @@
 
 ## 📊 Performance & Benchmarks
 
-Measured on an **NVIDIA RTX 3060 (12GB)**, comparing standard 24kHz synthesis against 48kHz production output with NovaSR.
+### End-to-end throughput on RTX 5080 Laptop (Blackwell SM 12.0, 16 GiB)
+
+Measured with `scripts/benchmark.py` on an idle GPU; the 64 short
+sentences total ~11 minutes of synthesized speech.
+
+| Configuration | Audio | Wall | RTF | Realtime |
+| :--- | ---: | ---: | ---: | ---: |
+| Serial baseline, n=16 | 166 s | 26.7 s | 0.161x | 6.2x |
+| Concurrent, conc=8, n=16 | 161 s | 8.7 s | 0.054x | 18.6x |
+| Concurrent, conc=16, n=32 | 336 s | 15.1 s | 0.045x | 22.3x |
+| Concurrent, conc=32, n=64 | 628 s | 22.9 s | 0.036x | 27.5x |
+| Concurrent, conc=64, n=64 | 670 s | 23.0 s | **0.034x** | **29.2x** |
+
+> [!TIP]
+> Use `python scripts/benchmark.py --conc 32 --n 64 --no-serial` to
+> reproduce the throughput numbers on your own GPU.
+
+> [!NOTE]
+> Numbers updated after fixes for two latent regressions on
+> vLLM 0.10's V0 engine: (1) the default `cpu_offload_gb=8.0` was
+> silently offloading the entire GPT decoder to CPU and round-tripping
+> per-decode-step transfers through `functional_call`, and (2) the
+> decode forward path embedded the placeholder `input_ids` instead of
+> using the `inputs_embeds` that vLLM precomputes from each sampled
+> token under `enable_prompt_embeds=True`. Both fixes ship in commits
+> [`9403ff7`](https://github.com/akumaburn/Auralis-Enhanced-Blackwell/commit/9403ff7)
+> and [`d9a3d75`](https://github.com/akumaburn/Auralis-Enhanced-Blackwell/commit/d9a3d75).
+> Audio totals shrank ~40% because the model now generates the prompt
+> sentence and stops, rather than rambling on uncorrelated mel tokens
+> until a random EOS sample.
+
+### NovaSR super-resolution overhead
 
 | Metric | Base (24kHz) | Enhanced (NovaSR 48kHz) | Impact |
 | :--- | :--- | :--- | :--- |
@@ -103,17 +134,53 @@ Experience the difference between standard synthesis and professional **48kHz Au
 | 4 | *Privacidad de datos y escalabilidad ilimitada en su infraestructura...* | <audio controls src="samples/sample_es_4_base.wav"></audio> | <audio controls src="samples/sample_es_4_enhanced.wav"></audio> |
 | 5 | *Fidelidad de audio impecable donde la velocidad es clave...* | <audio controls src="samples/sample_es_5_base.wav"></audio> | <audio controls src="samples/sample_es_5_enhanced.wav"></audio> |
 ---
+## 🟢 Blackwell (RTX 50-series) Support
+
+This fork ships a custom `XttsGPT` model on top of vLLM 0.9.2 + PyTorch
+2.7+cu128, so it runs natively on Blackwell GPUs (RTX 5080, 5090, RTX
+PRO 6000). Key implementation notes:
+
+- The GPT decoder uses vLLM's `HasInnerState` protocol to track per-
+  request prefill lengths and hidden states, so vLLM's continuous
+  batching is fully restored (no `max_num_seqs=1` workaround).
+- Conditioning latents and text embeddings are pre-computed in PyTorch
+  and submitted as `EmbedsPrompt(prompt_embeds=...)`, sidestepping the
+  multimodal-processor refactor needed for vLLM ≥ 0.7.
+- The perceiver resampler enables flash + mem-efficient + math SDPA
+  backends together because Blackwell's flash kernel does not yet cover
+  every q/k/v shape XTTS feeds it.
+- `safetensors` checkpoint loading uses `load_file` + `load_state_dict`
+  to avoid newer safetensors' rejection of shared-storage buffers in the
+  HiFiGAN decoder's speaker encoder.
+
+See [`CHANGELOG.md`](CHANGELOG.md#210---2026-05-22) for the full porting
+notes.
+
+---
+
 ## Quick Start ⭐
 
 ### 1. Installation
 ```bash
-git clone https://github.com/groxaxo/Auralis-Enhanced.git
-cd Auralis-Enhanced
-conda create -n auralis_env python=3.10 -y
-conda activate auralis_env
+git clone https://github.com/akumaburn/Auralis-Enhanced-Blackwell.git
+cd Auralis-Enhanced-Blackwell
+conda create -n auralis python=3.10 -y
+conda activate auralis
+
+# PyTorch 2.7 + CUDA 12.8 wheels (Blackwell-capable)
+pip install --index-url https://download.pytorch.org/whl/cu128 \
+    torch==2.7.0 torchaudio==2.7.0 torchvision==0.22.0
+
+# Auralis Enhanced + vLLM 0.9.2 + transitive deps
 pip install -r requirements.txt
 pip install -e .
+
+# NovaSR audio super-resolution (optional, enables 48 kHz output)
+pip install git+https://github.com/ysharma3501/NovaSR.git
 ```
+
+See [`INSTALL.md`](INSTALL.md) for system packages, CPU-only setup, and
+troubleshooting.
 
 ### 2. Basic Usage (Python)
 ```python
@@ -148,6 +215,83 @@ print(f"Sample rate: {output.sample_rate}")  # 24000
 enhanced = output.apply_super_resolution()
 print(f"Enhanced rate: {enhanced.sample_rate}")  # 48000
 ```
+
+### 4. Reproducible / styled generation
+
+`TTSRequest` exposes the same generation knobs upstream Coqui XTTS does:
+
+| Field | Default | Effect |
+| :--- | :--- | :--- |
+| `seed` | `None` | When set, makes the autoregressive sampler deterministic; identical `(text, speaker, seed)` yields a byte-identical waveform. |
+| `do_sample` | `True` | `False` switches to greedy decoding (`temperature=0`, `top_k=1`), also fully deterministic. |
+| `temperature`, `top_p`, `top_k` | `0.75 / 0.85 / 50` | Standard sampling knobs, forwarded to vLLM's sampler. |
+| `repetition_penalty` | `5.0` | Penalises tokens already in the prompt or generated so far (see `LogitsRepetitionPenalizer`). |
+| `length_penalty` | `1.0` | Biases the mel-EOS logit by `(1 − length_penalty) * sqrt(n + 1)`. `> 1.0` yields longer audio, `< 1.0` shorter. |
+| `speed` | `1.0` | Pitch-preserving time stretch on the HiFiGAN output. `1.5` is 1.5× faster, `0.75` is slower. |
+| `apply_novasr` | `False` | 16 → 48 kHz NovaSR super-resolution. |
+
+```python
+# Deterministic generation
+request = TTSRequest(
+    text="The same seed produces the same waveform.",
+    speaker_files=['reference.wav'],
+    seed=42,
+)
+
+# Greedy decoding
+request = TTSRequest(
+    text="No sampling randomness here.",
+    speaker_files=['reference.wav'],
+    do_sample=False,
+)
+
+# Slow down the output (pitch preserved)
+request = TTSRequest(
+    text="Read this slowly.",
+    speaker_files=['reference.wav'],
+    speed=0.75,
+)
+```
+
+---
+
+## 📈 Throughput benchmark
+
+Reproduce the table at the top of the README on your own GPU:
+
+```bash
+# Concurrent throughput sweep (no serial baseline, ~1 min on RTX 5080)
+python scripts/benchmark.py --conc 64 --n 64 --no-serial
+
+# Include the serial baseline for a side-by-side speedup number
+python scripts/benchmark.py --conc 16 --n 16
+
+# 48 kHz output (NovaSR upsampling on every request)
+python scripts/benchmark.py --conc 16 --n 16 --novasr
+```
+
+The script prints a single line starting with `RESULT` per run, so it is
+easy to log or grep in CI.
+
+### Auto-concurrency
+
+`TTS()` and `TTS().from_pretrained(...)` both pick a sensible
+`max_concurrency` (and `scheduler_max_concurrency`) from your
+currently-free VRAM if you do not pass an explicit value:
+
+```python
+# Auto-detected; on a 16 GiB GPU this typically lands at 32.
+tts = TTS().from_pretrained("AstraMindAI/xttsv2",
+                            gpt_model="AstraMindAI/xtts2-gpt")
+```
+
+The formula divides the smaller of `gpu_memory_utilization *
+total_vram` and `free_vram − 3 GiB` (HiFiGAN + conditioning headroom)
+by the per-slot cost (~155 MiB at the XTTS GPT config), and clamps
+to `[1, 32]`. Lowering `gpu_memory_utilization` scales the suggestion
+down naturally; passing `max_concurrency` explicitly disables the
+auto-detect. See `auralis.common.utilities.suggest_max_concurrency`
+for the full memory model.
 
 ---
 
@@ -234,7 +378,7 @@ Special thanks to:
 
 <div align="center">
 
-### 🌟 [Give us a star on GitHub!](https://github.com/groxaxo/Auralis-Enhanced)
+### 🌟 [Give us a star on GitHub!](https://github.com/akumaburn/Auralis-Enhanced-Blackwell)
 
 Built with ❤️ by the open-source community.
 

@@ -155,3 +155,91 @@ def load_fsspec(
     """
     with fsspec.open(path, "rb") as f:
             return torch.load(f, map_location=map_location, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Auto-concurrency for the vLLM-backed XTTSv2 engine
+# ---------------------------------------------------------------------------
+
+# Default ``max_concurrency`` ceiling. The empirical throughput curve
+# on the XTTSv2 GPT plateaus past 32 in-flight sequences -- on a 16 GiB
+# RTX 5080 Laptop we measure ~23x realtime at conc=16 vs ~27x at
+# conc=32 vs ~29x at conc=64, so each doubling past 32 buys <10% of
+# throughput at 2x the activation + KV pressure. Operators with very
+# large GPUs and specific throughput targets can override by passing
+# ``max_concurrency`` explicitly.
+DEFAULT_MAX_CONCURRENCY_CAP = 32
+
+# Per-concurrent-slot memory budget inside the vLLM allocation:
+#   activations: ~30 MiB/slot (measured: 0.49 GiB @ conc=16 ->
+#                              0.97 GiB @ conc=32 -> 1.93 GiB @ conc=64)
+#   paged KV at the XTTS GPT config (max_model_len=1047, 30 layers,
+#                              h=1024, bf16): ~125 MiB peak/slot
+#   --------------------------------------------------------------
+#   total per slot:                          ~0.155 GiB
+PER_SLOT_GB = 0.155
+
+# Inside the vLLM budget, fixed costs not scaling with concurrency:
+#   GPT weights (bf16):           ~0.75 GiB
+#   vLLM scheduler bookkeeping:   ~0.10 GiB
+FIXED_INSIDE_VLLM_GB = 0.85
+
+# What HiFiGAN + conditioning encoder + per-step decoder tensors hold
+# OUTSIDE vLLM's accounted budget. Conservative to keep room for the
+# super-resolution head (NovaSR) and for transient peak allocations
+# during conditioning.
+OUTSIDE_VLLM_OVERHEAD_GB = 3.0
+
+
+def suggest_max_concurrency(
+    gpu_memory_utilization: float = 0.5,
+    *,
+    cap: int = DEFAULT_MAX_CONCURRENCY_CAP,
+    device: "torch.device | int | None" = None,
+) -> int:
+    """Pick a sensible ``max_concurrency`` default from currently-free
+    VRAM and the configured ``gpu_memory_utilization``.
+
+    Used by both :class:`auralis.core.tts.TTS` (to size the two-phase
+    scheduler) and :class:`auralis.models.xttsv2.XTTSv2Engine` (to
+    forward to vLLM's ``max_num_seqs``) so the two stay in lockstep
+    without the caller having to set them manually.
+
+    The vLLM budget is the smaller of (a) the engine's self-cap
+    ``gpu_memory_utilization * total_gpu_memory``, and (b) what is
+    currently free on the device minus an out-of-vLLM allowance for
+    the HiFiGAN decoder + conditioning encoder. From that budget we
+    subtract a fixed term (weights + scheduler) and divide the
+    remainder by the per-slot cost (activations + paged KV).
+
+    The result is clamped to ``[1, cap]``. ``cap`` defaults to
+    :data:`DEFAULT_MAX_CONCURRENCY_CAP` (32) -- see that constant's
+    docstring for the throughput curve that motivates it. Pass
+    ``cap=64`` (or higher) on big-memory GPUs where you want the
+    extra 5-10% throughput at the cost of significantly more VRAM.
+
+    Returns 1 on CPU-only systems and on GPUs too cramped to fit even
+    a single sequence.
+    """
+    if not torch.cuda.is_available():
+        return 1
+    try:
+        dev = (torch.cuda.current_device() if device is None
+               else torch.device(device).index if isinstance(device, torch.device)
+               else int(device))
+        free_bytes, total_bytes = torch.cuda.mem_get_info(dev)
+    except Exception:
+        # mem_get_info can fail on some driver / CUDA combinations;
+        # return a middle-ground default rather than guessing further.
+        return min(cap, 8)
+    free_gb = free_bytes / (1024 ** 3)
+    total_gb = total_bytes / (1024 ** 3)
+
+    vllm_budget_gb = min(
+        total_gb * float(gpu_memory_utilization),
+        free_gb - OUTSIDE_VLLM_OVERHEAD_GB,
+    )
+    if vllm_budget_gb <= FIXED_INSIDE_VLLM_GB:
+        return 1
+    slots = int((vllm_budget_gb - FIXED_INSIDE_VLLM_GB) / PER_SLOT_GB)
+    return max(1, min(cap, slots))

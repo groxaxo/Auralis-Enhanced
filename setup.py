@@ -30,6 +30,11 @@ setup(
                 'auralis.openai=auralis.entrypoints.oai_server:main',
             ],
         },
+    # Keep in sync with requirements.txt. `torch` / `torchaudio` /
+    # `torchvision` are pulled in transitively (and pinned exactly) by
+    # vllm 0.9.2, so we do not list them here; users on Blackwell should
+    # install the cu128 wheels manually before `pip install -e .` per
+    # INSTALL.md, otherwise pip resolves a CPU-only wheel from PyPI.
     install_requires=[
         "aiofiles",
         "beautifulsoup4",
@@ -43,28 +48,25 @@ setup(
         "hangul_romanize",
         "huggingface_hub",
         "ipython",
+        "langid",
         "librosa",
         "networkx",
         "num2words",
+        "numpy>=2.0",
+        "nvidia-ml-py",
         "opencc",
         "packaging",
         "pyloudnorm",
-        "pytest",
         "pypinyin",
+        "pytest",
         "safetensors",
+        "setuptools",
         "sounddevice",
         "soundfile",
-        "spacy==3.7.5",
-        "setuptools",
-        "safetensors",
-        "torchaudio",
+        "spacy>=3.8",
         "tokenizers",
-        "transformers",
-        "vllm==0.6.4.post1",
-        "nvidia-ml-py",
-        "numpy",
-        "langid"
-
+        "transformers>=4.51,<4.55",
+        "vllm>=0.9.2",
     ],
     extras_require={
         'docs': [

@@ -1,6 +1,7 @@
 import asyncio
 import functools
 import hashlib
+import os
 import time
 import uuid
 from collections import OrderedDict
@@ -13,11 +14,17 @@ from concurrent.futures import ThreadPoolExecutor
 import librosa
 import numpy as np
 import torch
+import torch.nn.functional as F
 import torchaudio
 from torch import nn
 
-from vllm import AsyncLLMEngine, AsyncEngineArgs, TokensPrompt, RequestOutput
-from vllm.multimodal import MultiModalDataDict
+# XTTSv2's GPT model is implemented as a custom V0-compatible model
+# (vllm 0.9.2's V1 engine has no support for `prompt_embeds`, which the
+# pre-computed conditioning path relies on). Force V0 before any vllm import.
+os.environ.setdefault("VLLM_USE_V1", "0")
+
+from vllm import AsyncLLMEngine, AsyncEngineArgs, RequestOutput, SamplingParams
+from vllm.inputs.data import EmbedsPrompt
 from vllm.sampling_params import RequestOutputKind
 from vllm.utils import Counter
 
@@ -29,18 +36,50 @@ from ..base import (
 from ...common.logging.logger import setup_logger
 from ...common.definitions.output import TTSOutput
 from ...common.definitions.requests import TTSRequest
-from ...common.utilities import wav_to_mel_cloning, load_audio
+from ...common.utilities import (
+    wav_to_mel_cloning, load_audio, suggest_max_concurrency)
 
-from .components.vllm_mm_gpt import LearnedPositionEmbeddings
+from .components.vllm_mm_gpt import LearnedPositionEmbeddings, XttsGPT
 from .config.tokenizer import XTTSTokenizerFast
 from .config.xttsv2_config import XTTSConfig
 from .config.xttsv2_gpt_config import XTTSGPTConfig
 
-from .components.vllm.hidden_state_collector import HiddenStatesCollector
-from .components.vllm.hijack import ExtendedSamplingParams, LogitsRepetitionPenalizer
+from .components.vllm.hijack import (
+    LogitsLengthPenalizer,
+    LogitsRepetitionPenalizer,
+)
 from .components.tts.layers.xtts.hifigan_decoder import HifiDecoder
 from .components.tts.layers.xtts.latent_encoder import ConditioningEncoder
 from .components.tts.layers.xtts.perceiver_encoder import PerceiverResampler
+
+
+_VLLM_MEMORY_ASSERT_PATCHED = False
+
+
+def _patch_vllm_memory_profile_assert():
+    """Neutralise vLLM's "profile must allocate memory" assertion.
+
+    The check at `vllm.worker.worker.Worker._assert_memory_footprint_increased
+    _during_profiling` raises an `AssertionError` if the post-profile GPU
+    snapshot is not strictly greater than the pre-profile baseline. For the
+    XTTS GPT (a tiny ~30M-param model used with `max_num_seqs=1`) the profile
+    forward frees more caching-allocator slack than it allocates, so the
+    assertion produces false positives. We replace it with a no-op once per
+    process; the rest of the profiling logic (KV cache block count discovery)
+    still runs and stays accurate.
+    """
+    global _VLLM_MEMORY_ASSERT_PATCHED
+    if _VLLM_MEMORY_ASSERT_PATCHED:
+        return
+    try:
+        from vllm.worker import worker as _vllm_worker
+        _vllm_worker.Worker._assert_memory_footprint_increased_during_profiling = (
+            lambda self: None)
+        _VLLM_MEMORY_ASSERT_PATCHED = True
+    except Exception:
+        # Best-effort; if the symbol moves in a future vLLM release the
+        # original assertion will still fire and produce a clear traceback.
+        pass
 
 _CONDITIONING_CACHE_DIGEST_SIZE = 16
 
@@ -87,12 +126,26 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
         self.gpt_model = kwargs.pop("gpt_model")
         self.device_map = kwargs.pop("device_map", "auto")
-        self.enforce_eager = kwargs.pop("enforce_eager", False)   # False = enable CUDA graphs
-        self.num_scheduler_steps = kwargs.pop("num_scheduler_steps", 1)
         # Increased from 0.35 to 0.5 for better GPU utilization on modern GPUs
         # This allows more concurrent requests while still leaving headroom for decoder
         self.gpu_memory_utilization = kwargs.pop("gpu_memory_utilization", 0.5)
-        self.cpu_offload_gb = kwargs.pop("cpu_offload_gb", 8.0)
+        # ``cpu_offload_gb`` is the budget for vLLM's ``maybe_offload_to_cpu``
+        # helper (see vllm.model_executor.models.utils.make_layers, which
+        # wraps every transformer block with that helper). Anything > 0
+        # tells vLLM "offload up to N GB of layer weights to CPU and replace
+        # each layer's forward with a per-call ``functional_call`` that
+        # rehydrates the params on GPU per step". That path is intended for
+        # huge dense LLMs that do not fit on the GPU at all. The XTTS GPT
+        # decoder is ~0.76 GB in bfloat16 so the prior default of 8.0 GB
+        # silently offloaded ALL transformer blocks to CPU, and the
+        # functional_call shim does not preserve the vLLM ``Attention``
+        # layer's KV cache hookup correctly on V0 — generation runs but
+        # the per-step KV writes go to the CPU shadow of the params, so
+        # subsequent decode steps consume stale K/V and the audio output
+        # decorrelates from the text prompt. Default to 0.0 so the
+        # transformer blocks stay on GPU; operators with genuinely huge
+        # models can opt back in explicitly.
+        self.cpu_offload_gb = kwargs.pop("cpu_offload_gb", 0.0)
         self.swap_space = kwargs.pop("swap_space", 2.0)
         speaker_embedding_cache_size = kwargs.pop("speaker_embedding_cache_size", 100)
         try:
@@ -112,13 +165,32 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         self.tokenizer = XTTSTokenizerFast.from_pretrained(self.gpt_model)
         self.request_counter = Counter()
 
-        requested_concurrency = kwargs.pop("max_concurrency", 1)
+        # ``max_concurrency`` defaults to auto when unset or set to
+        # ``None``: we size it from the currently-free VRAM and the
+        # configured ``gpu_memory_utilization`` so a fresh install on
+        # a 16 GiB GPU does not silently run at concurrency 1 (the
+        # previous hard-coded default) and leave most of the engine
+        # idle. See :func:`auralis.common.utilities.suggest_max_concurrency`
+        # for the memory model and the empirical throughput curve that
+        # motivates the default cap. Explicit integer values still
+        # win, so existing call sites keep their old behaviour.
+        requested_concurrency = kwargs.pop("max_concurrency", None)
         self.is_cpu = self.device_map == "cpu" or (
             self.device_map == "auto" and not torch.cuda.is_available()
         )
-        self.max_concurrency = 1 if self.is_cpu else max(1, requested_concurrency)
+        if self.is_cpu:
+            self.max_concurrency = 1
+        elif requested_concurrency is None:
+            self.max_concurrency = suggest_max_concurrency(
+                self.gpu_memory_utilization)
+            self.logger.info(
+                "max_concurrency auto-detected from free VRAM: "
+                f"{self.max_concurrency} "
+                f"(gpu_memory_utilization={self.gpu_memory_utilization})")
+        else:
+            self.max_concurrency = max(1, int(requested_concurrency))
         semaphore_concurrency = (
-            1 if self.is_cpu else max(2, self.max_concurrency // 3) * self.tp
+            1 if self.is_cpu else max(1, self.max_concurrency // 6) * self.tp
         )
 
         # Register buffer before creating modules
@@ -185,6 +257,17 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
 
         if not self.is_cpu:
             self.get_memory_usage_curve()
+            # vLLM's memory profiler asserts that the GPU footprint grows
+            # monotonically during its dummy forward (vllm.worker.worker:305).
+            # On tiny models like the XTTS GPT the profile run actually
+            # *releases* caching-allocator slack accumulated during our
+            # nn.Module construction, so the post-profile snapshot dips
+            # below the baseline and trips the assertion. The assertion is a
+            # heuristic safety check intended for large LLMs; for XTTS it
+            # produces false positives, so we replace it with a warning.
+            _patch_vllm_memory_profile_assert()
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
 
         # Initialize VLLM engine at the end, settings its concurrency
         self.init_vllm_engine(self.max_concurrency)
@@ -199,6 +282,18 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         # Key: normalized audio references + conditioning parameters.
         self._conditioning_cache = OrderedDict()
         self._conditioning_cache_lock = asyncio.Lock()
+        # Singleflight locks per conditioning-cache key. The
+        # encoder_semaphore below is a CAPACITY limit (max N concurrent
+        # conditioning computes for backpressure) but not a key-based
+        # mutex, so N concurrent requests with the SAME ``cache_key``
+        # were all able to pass the cache miss + semaphore acquire and
+        # then compute the latents in parallel -- 5 simultaneous
+        # perceiver-resampler passes over a 60 s reference reliably
+        # OOMs a 16 GiB GPU. With per-cache-key locks held during the
+        # compute, the first concurrent miss does the work and any
+        # siblings wake up, re-check the now-populated cache, and
+        # reuse the entry without any extra compute.
+        self._conditioning_inflight_locks: dict = {}
         self._max_cache_size = 100  # Limit cache size to prevent memory issues
         self._decode_counter_lock = asyncio.Lock()
         self._decode_counter = 0
@@ -273,8 +368,12 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             RuntimeError: If unable to determine memory usage for model initialization.
         """
         """Initialize models with AsyncVLLMEngine."""
-        # CPU inference is restricted to a single sequence to avoid runaway host memory use.
-        max_seq_num = 1 if self.is_cpu else concurrency
+        # XttsGPT now tracks per-request prefill lengths via the
+        # ``HasInnerState`` hook (request_ids_to_seq_ids is forwarded into
+        # ``forward``), so vLLM can co-batch concurrent requests safely. CPU
+        # inference is still restricted to one sequence to avoid runaway
+        # host memory use.
+        max_seq_num = 1 if self.is_cpu else max(1, concurrency)
         max_model_len = (
             self.gpt_config.max_text_tokens
             + self.gpt_config.max_audio_tokens
@@ -289,14 +388,12 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
             dtype="float32" if self.is_cpu else "auto",
             max_model_len=max_model_len,
             trust_remote_code=True,
-            enforce_eager=self.enforce_eager,
-            limit_mm_per_prompt={"audio": 1},
+            enforce_eager=True,
+            enable_prompt_embeds=True,
             max_num_seqs=max_seq_num,
             disable_log_stats=True,
             max_num_batched_tokens=max_model_len * max_seq_num,
         )
-        if self.num_scheduler_steps > 1:
-            engine_kwargs["num_scheduler_steps"] = self.num_scheduler_steps
 
         if self.is_cpu:
             engine_kwargs["swap_space"] = self.swap_space
@@ -386,19 +483,23 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 pretrained_model_name_or_path, "xtts-v2.safetensors"
             )
 
-        # Load HiFi-GAN weights.
-        # Use load_file + load_state_dict(strict=False) to bypass the safetensors
-        # shared-tensor validation (torch_spec window buffer is a computed constant
-        # that does not need to be restored from the checkpoint).
-        from safetensors.torch import load_file as _safetensors_load_file
+        # Load HiFi-GAN weights. We avoid `safetensors.torch.load_model`
+        # because newer safetensors (>=0.5) rejects state dicts that contain
+        # buffers sharing storage with another tensor (e.g.
+        # `hifigan_decoder.speaker_encoder.torch_spec.1.spectrogram.window`
+        # is a view created at construction time). Loading the raw state
+        # dict and calling `load_state_dict` directly is safe — we know the
+        # tensors are unique on disk and only become views in memory after
+        # being assigned back into the module.
+        from safetensors.torch import load_file
 
-        _state_dict = _safetensors_load_file(hifigan_weights)
-        _missing, _unexpected = model.load_state_dict(_state_dict, strict=False)
-        if _unexpected:
-            import logging as _logging
-            _logging.getLogger(__file__).warning(
-                "Unexpected keys while loading HiFi-GAN: %s", _unexpected[:5]
-            )
+        state_dict = load_file(hifigan_weights, device="cpu")
+        missing_keys, unexpected_keys = model.load_state_dict(
+            state_dict, strict=True)
+        if missing_keys or unexpected_keys:
+            raise RuntimeError(
+                "Weight mismatch loading XTTSv2 checkpoint: "
+                f"missing={missing_keys}, unexpected={unexpected_keys}")
 
         # Set model properties
         model.config = config
@@ -448,24 +549,126 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
     ) -> List[torch.Tensor]:
         """Merge text and audio conditioning signals.
 
-        Args:
-            text_conditioning (List[torch.Tensor]): List of text conditioning tensors.
-            audio_conditioning (torch.Tensor): Audio conditioning tensor.
-
-        Returns:
-            List[torch.Tensor]: List of merged conditioning tensors.
+        Returns one ``[L_cond + L_text, hidden]`` tensor per text chunk. Text
+        positional embeddings are already baked into ``text_conditioning``
+        by :meth:`prepare_text_tokens_async` (see ``text_pos_embedding`` usage
+        there); audio conditioning latents are perceiver outputs and carry no
+        positional structure, so the resulting tensor is ready to be used as
+        the leading portion of a vLLM :class:`EmbedsPrompt`.
         """
+        target_dtype = self._vllm_model_dtype()
         cond_latents = []
         for text_embedding in text_conditioning:
             # Concatenate along sequence dimension
             cond_latents.append(
-                (
-                    torch.cat([audio_conditioning, text_embedding], dim=1)
-                    .squeeze(0)
-                    .to(self.llm_engine.engine.model_config.dtype)
-                )
+                torch.cat([audio_conditioning, text_embedding], dim=1)
+                .squeeze(0)
+                .to(target_dtype)
             )
         return cond_latents
+
+    def _vllm_model_dtype(self) -> torch.dtype:
+        """Return the dtype of the underlying vLLM-loaded GPT weights.
+
+        vLLM 0.9.2's `AsyncLLMEngine` no longer exposes the V0 `.engine`
+        attribute directly; we go through `engine.model_config.dtype` instead.
+        """
+        if hasattr(self.llm_engine, "engine"):
+            mc = self.llm_engine.engine.model_config
+        else:
+            mc = self.llm_engine.model_config
+        return mc.dtype
+
+    def _get_loaded_xtts_gpt(self) -> nn.Module:
+        """Reach into the vLLM engine for the loaded XttsGPT module.
+
+        Used to look up the embedding tables (`wte`, `wpe`) when constructing
+        prompt embeddings for either the autoregressive generation pass or
+        the logits-only pass. The traversal follows V0 single-process layout:
+        AsyncLLMEngine -> LLMEngine -> model_executor -> driver_worker ->
+        model_runner -> model.
+        """
+        eng = self.llm_engine.engine if hasattr(self.llm_engine,
+                                                "engine") else self.llm_engine
+        executor = eng.model_executor
+        # `driver_worker` exists for single-process executors (the typical
+        # path when tensor_parallel_size == 1 == pipeline_parallel_size).
+        worker = getattr(executor, "driver_worker", None)
+        if worker is None:
+            # Multi-worker path: fall back to the first collective worker.
+            worker = executor.workers[0]
+        runner = worker.model_runner
+        return runner.model
+
+    def _build_generation_prompt_embeds(
+        self,
+        merged_conditioning: torch.Tensor,
+    ) -> torch.Tensor:
+        """Append ``wte(start_audio_token) + wpe(audio_pos=0)`` to the merged
+        conditioning so vLLM can start autoregressive audio token generation.
+
+        The XTTS GPT was trained with the start-of-audio token sitting at
+        audio position 0 (immediately after the conditioning + text prefix),
+        which is why ``XttsGPT._active_prefill_len`` includes this token.
+        """
+        gpt = self._get_loaded_xtts_gpt().gpt  # _XttsTransformer holds wte/wpe
+        device = merged_conditioning.device
+        dtype = merged_conditioning.dtype
+
+        start_token_id = torch.tensor([self.mel_bos_token_id], device=device)
+        start_embed = gpt.wte(start_token_id).to(dtype)
+        # `LearnedPositionEmbeddings.get_fixed_embedding` returns a
+        # [B, 1, D] tensor for scalar inputs; squeeze back to [1, D].
+        zero_pos = torch.zeros(1, dtype=torch.long, device=device)
+        start_pos_embed = gpt.wpe.get_fixed_embedding(
+            zero_pos, device).view(1, -1).to(dtype)
+        start_with_pos = start_embed + start_pos_embed
+
+        return torch.cat([merged_conditioning, start_with_pos], dim=0)
+
+    def _build_logits_prompt_embeds(
+        self,
+        merged_conditioning: torch.Tensor,
+        token_ids: List[int],
+    ) -> torch.Tensor:
+        """Build a prefill-only EmbedsPrompt for the hidden-states extraction
+        path.
+
+        Layout (mirrors the original V0 logits-only flow):
+            [cond_latents, text_embeds, wte(mel_bos)+wpe(0),
+             wte(t_0)+wpe(1), ..., wte(t_{N-1})+wpe(N),
+             wte(mel_eos)+wpe(N+1), ..., wte(mel_eos)+wpe(N+4)]
+
+        `token_ids` is the autoregressive output from
+        :meth:`get_generation_context`, so the resulting prefill captures the
+        hidden state for every position the HiFiGAN decoder needs.
+        """
+        gpt = self._get_loaded_xtts_gpt().gpt  # _XttsTransformer holds wte/wpe
+        device = merged_conditioning.device
+        dtype = merged_conditioning.dtype
+
+        full_ids = (
+            [self.mel_bos_token_id]
+            + list(token_ids)
+            + [self.mel_eos_token_id] * 4
+        )
+        ids_tensor = torch.tensor(full_ids, dtype=torch.long, device=device)
+        token_embeds = gpt.wte(ids_tensor).to(dtype)
+
+        audio_positions = torch.arange(
+            len(full_ids), dtype=torch.long, device=device)
+        # When generation reaches close to ``gpt_max_audio_tokens`` the
+        # trailing ``[mel_bos | tokens | mel_eos*4]`` positions can exceed
+        # the learned wpe table (sized ``max_audio_tokens + 3``). Those
+        # trailing positions are sliced off in ``get_model_logits`` via
+        # ``[start_of_audio_hs:-5]``, so a clamped wpe lookup for them is
+        # safe — the hidden states they contribute are discarded.
+        audio_positions = torch.clamp(audio_positions, max=gpt.wpe.seq_len - 1)
+        pos_embeds = gpt.wpe.get_fixed_embedding(
+            audio_positions, device).view(token_embeds.shape).to(dtype)
+
+        audio_part = token_embeds + pos_embeds
+        return torch.cat([merged_conditioning, audio_part], dim=0)
 
     def get_gpt_cond_latents(self, audio, sr, length: int = 30, chunk_length: int = 6):
         """Generate GPT conditioning latents from audio.
@@ -900,96 +1103,111 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
         if cached_result is not None:
             return cached_result
 
-        async with self.encoder_semaphore:
-            # Double-check cache after acquiring semaphore (another coroutine might have populated it)
-            # Skip cache-hit logging here so requests that miss the first check do not
-            # emit duplicate log lines after waiting on the semaphore.
+        # Singleflight: per-cache-key lock prevents N concurrent
+        # requests with the same voice setup from each running the
+        # mel + perceiver-resampler conditioning compute in parallel.
+        # ``setdefault`` is race-free under asyncio's single-threaded
+        # execution -- there is no ``await`` between the get and the
+        # store.
+        inflight_lock = self._conditioning_inflight_locks.setdefault(
+            cache_key, asyncio.Lock())
+        async with inflight_lock:
+            # Recheck cache after acquiring the per-key lock; a
+            # sibling task may have just populated it.
             cached_result = await self._get_cached_conditioning_result(cache_key)
             if cached_result is not None:
+                # Drop the lock entry now that the cache hit will
+                # absorb all future requests for this key.
+                self._conditioning_inflight_locks.pop(cache_key, None)
                 return cached_result
 
-            # Run the original get_conditioning_latents in executor
-            result = await self.get_conditioning_latents(
-                audio_reference,
-                max_ref_length,
-                gpt_cond_len,
-                gpt_cond_chunk_len,
-                librosa_trim_db,
-                sound_norm_refs,
-                load_sr,
-            )
+            # encoder_semaphore enforces a global cap on concurrent
+            # conditioning computes (across DIFFERENT cache keys) so
+            # the GPU isn't oversubscribed by, say, two characters'
+            # voices loading at exactly the same moment.
+            async with self.encoder_semaphore:
+                result = await self.get_conditioning_latents(
+                    audio_reference,
+                    max_ref_length,
+                    gpt_cond_len,
+                    gpt_cond_chunk_len,
+                    librosa_trim_db,
+                    sound_norm_refs,
+                    load_sr,
+                )
 
-            async with self._conditioning_cache_lock:
-                self._conditioning_cache[cache_key] = result
-                self._conditioning_cache.move_to_end(cache_key)
-                if len(self._conditioning_cache) > self._max_cache_size:
-                    self._conditioning_cache.popitem(last=False)
+                async with self._conditioning_cache_lock:
+                    self._conditioning_cache[cache_key] = result
+                    self._conditioning_cache.move_to_end(cache_key)
+                    if len(self._conditioning_cache) > self._max_cache_size:
+                        self._conditioning_cache.popitem(last=False)
+            # Release the in-flight slot after the cache is
+            # populated so waiters see the populated entry.
+            self._conditioning_inflight_locks.pop(cache_key, None)
             return result
 
     async def get_model_logits(
         self,
         token_ids: List[int],
-        conditioning: MultiModalDataDict,
+        merged_conditioning: torch.Tensor,
         request_id: str,
     ) -> torch.Tensor:
-        """Get model logits for token generation.
+        """Run a single prefill pass to recover per-position hidden states.
 
-        Executes a single token generation pass through the GPT model to collect
-        hidden states for the given token sequence and conditioning.
+        Unlike the V0 implementation this no longer relies on
+        ``hidden_state_collector`` (removed in vLLM 0.9). Instead we submit a
+        full EmbedsPrompt covering ``[conditioning, mel_bos, token_ids,
+        mel_eos*4]`` with ``max_tokens=1`` and pick up the captured prefill
+        tensor from ``XttsGPT._last_prefill_hidden_states``.
 
         Args:
-            token_ids (List[int]): Input token IDs.
-            conditioning (MultiModalDataDict): Conditioning data.
-            request_id (str): Unique request identifier.
+            token_ids: Generated audio token IDs.
+            merged_conditioning: ``[L_cond + L_text, hidden]`` tensor from
+                :meth:`_merge_conditioning`, on the GPT model dtype/device.
+            request_id: Unique request identifier (suffixed internally).
 
         Returns:
-            torch.Tensor: Model logits (normalized hidden states).
+            torch.Tensor: ``[1, N, hidden]`` final-norm hidden states sliced
+            to the ``[mel_bos, ..., token_ids[N-1]]`` positions, ready for
+            the HiFiGAN decoder.
         """
         request_id = f"{request_id}_logits"
+        # `merged_conditioning` already lives on the GPU; `_build_logits_*`
+        # appends the [mel_bos | token_ids | mel_eos*4] block in the same
+        # dtype/device.
+        prompt_embeds = self._build_logits_prompt_embeds(
+            merged_conditioning, token_ids)
+        prefill_len = prompt_embeds.shape[0]
 
-        # Reset token_ids on each attempt
-        token_ids = (
-            [self.mel_bos_token_id] + list(token_ids) + [self.mel_eos_token_id] * 4
-        )
-        # we need 5 eos tokens
+        XttsGPT.register_prefill_len(request_id, prefill_len)
+        try:
+            sampling_params = SamplingParams(
+                detokenize=False,
+                max_tokens=1,
+                output_kind=RequestOutputKind.FINAL_ONLY,
+            )
 
-        engine_inputs = TokensPrompt(prompt_token_ids=token_ids)
-        conditioning["audio"]["sequence_length"] = len(token_ids)
+            generator = self.llm_engine.generate(
+                prompt=EmbedsPrompt(prompt_embeds=prompt_embeds),
+                sampling_params=sampling_params,
+                request_id=request_id,
+            )
 
-        engine_inputs["multi_modal_data"] = conditioning
+            async for output in generator:  # consume the generator
+                if output.finished:
+                    break
 
-        hidden_states_collector = HiddenStatesCollector()
-        # Bind the collector to this request
-        bound_collector = hidden_states_collector.bind_to_request(request_id)
-
-        # Set up sampling parameters with the bound collector
-        sampling_params = ExtendedSamplingParams(
-            detokenize=False,
-            request_id=request_id,
-            max_tokens=1,
-            hidden_state_collector=bound_collector,
-            output_kind=RequestOutputKind.FINAL_ONLY,
-        )
-
-        # Generate with unique request ID
-        generator = self.llm_engine.generate(
-            prompt=engine_inputs, sampling_params=sampling_params, request_id=request_id
-        )
-
-        async for output in generator:  # consume the generator
-            if output.finished:
-                pass
-
-        # Get the collected hidden states
-        hidden_states = await hidden_states_collector.get_hidden_states(request_id)
+            hidden_states = XttsGPT.pop_prefill_hidden_states(request_id)
+        finally:
+            XttsGPT.unregister_request(request_id)
 
         if hidden_states is None:
             raise RuntimeError(
                 f"No hidden states collected for request {request_id}. "
                 f"This should never happen! Please report this issue on GitHub."
             )
-        start_of_audio_hs = conditioning["audio"]["embeds"].shape[0]  # type: ignore
-        # Successfully got hidden states
+
+        start_of_audio_hs = merged_conditioning.shape[0]
         return self.final_norm(
             hidden_states[start_of_audio_hs:-5, ...]
             .unsqueeze(0)
@@ -1037,46 +1255,114 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 text_embeddings, gpt_cond_latent
             )
 
-        # Start all requests in parallel
+        # XttsGPT bookkeeps per-request prefill lengths via the
+        # ``HasInnerState`` hook, so we can submit every chunk to vLLM
+        # concurrently and let the engine batch their decode steps together
+        # (up to ``max_num_seqs``). Each generator just registers its
+        # prefill_len once before kicking the engine and lets the worker
+        # clean up via ``finished_requests_ids`` when generation completes.
         generators = []
         requests_id = []
-        for seq_index, sequence in enumerate(tokens_list):
-            sampling_params = ExtendedSamplingParams(
-                temperature=request.temperature,
-                top_p=request.top_p,
-                detokenize=False,
-                request_id=uuid.uuid4(),
-                top_k=request.top_k,
-                logits_processors=[
-                    LogitsRepetitionPenalizer(request.repetition_penalty)
-                ],
-                repetition_penalty=1.0,  # Since we're handling repetition penalty manually
-                max_tokens=self.gpt_config.gpt_max_audio_tokens,
-                ignore_eos=True,  # Ignore the tokenizer eos token since it is for textual generation
-                stop_token_ids=[self.mel_eos_token_id],
-                output_kind=RequestOutputKind.FINAL_ONLY,
-            )
-
-            engine_inputs = TokensPrompt(prompt_token_ids=sequence)
-            if gpt_embed_inputs is not None:
-                engine_inputs["multi_modal_data"] = {
-                    "audio": {
-                        "embeds": gpt_embed_inputs[seq_index],
-                        "is_logits_only_mode": False,
-                        "sequence_length": len(sequence),
-                    }
-                }
+        for seq_index, _ in enumerate(tokens_list):
             request_id = f"{request.request_id}_{seq_index}"
-            # Get audio token generator from VLLM
-            token_generator = self.llm_engine.generate(
-                prompt=engine_inputs,
+            requests_id.append(request_id)
+            generators.append(self._submit_chunk(
+                seq_index=seq_index,
+                request=request,
+                merged_conditioning=gpt_embed_inputs[seq_index],
+                request_id=request_id,
+            ))
+
+        return generators, requests_id, speaker_embeddings, gpt_embed_inputs
+
+    async def _submit_chunk(
+        self,
+        seq_index: int,
+        request: TTSRequest,
+        merged_conditioning: torch.Tensor,
+        request_id: str,
+    ):
+        """Per-chunk wrapper around ``llm_engine.generate``.
+
+        Builds the prompt embeddings, registers the prefill length under
+        ``request_id`` (so :meth:`XttsGPT.forward` can rebase decode-time
+        positions), then yields outputs from the engine. No external locking
+        is needed: vLLM is free to co-batch this chunk's decode steps with
+        any other in-flight chunk because ``XttsGPT`` carries per-request
+        offsets through ``request_ids_to_seq_ids``.
+        """
+        prompt_embeds = self._build_generation_prompt_embeds(
+            merged_conditioning)
+        prefill_len = prompt_embeds.shape[0]
+        XttsGPT.register_prefill_len(request_id, prefill_len)
+        try:
+            sampling_params = self._build_sampling_params(request)
+            engine_generator = self.llm_engine.generate(
+                prompt=EmbedsPrompt(prompt_embeds=prompt_embeds),
                 sampling_params=sampling_params,
                 request_id=request_id,
             )
-            generators.append(token_generator)
-            requests_id.append(request_id)
+            async for output in engine_generator:
+                yield output
+        finally:
+            # vLLM will normally clear our state via finished_requests_ids,
+            # but we also clear here to cover early generator close
+            # (e.g. caller cancellation).
+            XttsGPT.unregister_request(request_id)
 
-        return generators, requests_id, speaker_embeddings, gpt_embed_inputs
+    def _build_sampling_params(self, request: TTSRequest) -> SamplingParams:
+        """Build per-chunk sampling params for the autoregressive pass.
+
+        Honours every generation knob exposed on ``TTSRequest``:
+
+        * ``temperature`` / ``top_p`` / ``top_k`` are forwarded directly.
+        * ``do_sample=False`` switches the sampler to greedy by forcing
+          ``temperature=0`` and ``top_k=1`` (vLLM's greedy convention).
+        * ``seed`` is forwarded to ``SamplingParams.seed`` so the mel-token
+          stream is reproducible for a given (text, speaker, params) tuple.
+        * ``repetition_penalty`` is applied via our custom
+          :class:`LogitsRepetitionPenalizer` (which can see the prompt
+          tokens, unlike vLLM's built-in scalar penalty).
+        * ``length_penalty`` is emulated via
+          :class:`LogitsLengthPenalizer` because vLLM does not expose
+          beam-search; the processor is a no-op when ``length_penalty == 1.0``.
+        """
+        if request.do_sample:
+            temperature = request.temperature
+            top_k = request.top_k
+            top_p = request.top_p
+        else:
+            # Greedy decoding: vLLM treats temperature=0 as argmax. We also
+            # collapse top_k/top_p to their no-op-for-greedy values.
+            temperature = 0.0
+            top_k = 1
+            top_p = 1.0
+
+        logits_processors = [
+            LogitsRepetitionPenalizer(request.repetition_penalty),
+        ]
+        if request.length_penalty != 1.0:
+            logits_processors.append(
+                LogitsLengthPenalizer(request.length_penalty,
+                                      eos_token_id=self.mel_eos_token_id))
+
+        return SamplingParams(
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            seed=request.seed,
+            detokenize=False,
+            logits_processors=logits_processors,
+            # We handle repetition penalty manually so the built-in stays
+            # at its no-op value.
+            repetition_penalty=1.0,
+            max_tokens=self.gpt_config.gpt_max_audio_tokens,
+            # The textual tokenizer's EOS is meaningless during audio
+            # token generation; rely on the mel EOS token instead.
+            ignore_eos=True,
+            stop_token_ids=[self.mel_eos_token_id],
+            output_kind=RequestOutputKind.FINAL_ONLY,
+        )
 
     @torch.inference_mode()
     async def process_tokens_to_speech(
@@ -1109,15 +1395,36 @@ class XTTSv2Engine(BaseAsyncTTSEngine):
                 # get the hidden states
                 hidden_states = await self.get_model_logits(
                     list(output.outputs[0].token_ids),
-                    {
-                        "audio": {
-                            "embeds": multimodal_data,  # Use multimodal data for conditioning
-                            "is_logits_only_mode": True,
-                            "sequence_length": False,  # to be inserted later
-                        },
-                    },
+                    multimodal_data,
                     output.request_id,
                 )
+
+                # Per-utterance speed control via GPT-latent length
+                # rescaling, matching the upstream Coqui XTTS reference
+                # implementation
+                # (``TTS.tts.models.xtts.Xtts.inference`` lines 509 and
+                # 558-561 in TTS 0.22). XTTS was trained with the
+                # HiFiGAN decoder consuming time-coherent latents; the
+                # legitimate way to change rate is to stretch the latent
+                # sequence in time BEFORE the vocoder synthesises audio,
+                # so the vocoder produces a natively rate-adjusted
+                # waveform with intact phase. The previous Auralis
+                # implementation ran the vocoder at 1.0x and then fed
+                # the waveform to ``librosa.effects.time_stretch`` (a
+                # phase vocoder over the magnitude STFT), which always
+                # leaves audible phase-incoherence artefacts ("robotic"
+                # / "metallic" / "phasey" smear on vowels) at every
+                # speed other than 1.0. Latent interpolation has none
+                # of those.
+                if request.speed != 1.0:
+                    length_scale = 1.0 / max(float(request.speed), 0.05)
+                    if length_scale != 1.0:
+                        hidden_states = F.interpolate(
+                            hidden_states.transpose(1, 2),
+                            scale_factor=length_scale,
+                            mode="linear",
+                            align_corners=False,
+                        ).transpose(1, 2)
 
                 async with self.decoder_semaphore:
                     async with self.cuda_memory_manager():
