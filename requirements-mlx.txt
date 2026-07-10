@@ -1,0 +1,2 @@
+# Apple Silicon development installation (M1-M5 and later)
+-e .[mlx,server,examples]

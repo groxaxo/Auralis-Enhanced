@@ -1,3 +1,7 @@
+"""OpenAI-compatible Auralis server with optional vLLM and MLX backends."""
+
+from __future__ import annotations
+
 import argparse
 import asyncio
 import base64
@@ -10,18 +14,22 @@ from typing import Optional
 
 import aiohttp
 import uvicorn
-from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from starlette.responses import StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from auralis.core.tts import TTS
 from auralis.common.definitions.openai import (
-    VoiceChatCompletionRequest,
     AudioSpeechGenerationRequest,
+    VoiceChatCompletionRequest,
 )
+from auralis.core.tts import TTS
 
-# Global state for lazy initialization with inactivity timeout
+DEFAULT_VLLM_MODEL = "AstraMindAI/xttsv2"
+DEFAULT_VLLM_GPT_MODEL = "AstraMindAI/xtts2-gpt"
+DEFAULT_MLX_MODEL = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"
+
+# Lazy global state. The model is released after an inactivity timeout so the
+# process can coexist with other GPU/Metal workloads.
 tts_engine: Optional[TTS] = None
 last_activity_time: float = 0.0
 cleanup_task: Optional[asyncio.Task] = None
@@ -29,15 +37,12 @@ init_lock: asyncio.Lock = asyncio.Lock()
 shutdown_lock: asyncio.Lock = asyncio.Lock()
 initializing: bool = False
 shutting_down: bool = False
+active_model_name: Optional[str] = None
 
-# Configuration defaults
-INACTIVITY_TIMEOUT = 300  # 5 minutes in seconds
-CLEANUP_CHECK_INTERVAL = 30  # Check every 30 seconds
-
-# Global arguments
+INACTIVITY_TIMEOUT = 300
+CLEANUP_CHECK_INTERVAL = 30
 server_args = None
 
-# Mapping of logging level strings to their corresponding logging constants
 logger_str_to_logging = {
     "info": logging.INFO,
     "warn": logging.WARNING,
@@ -45,180 +50,164 @@ logger_str_to_logging = {
 }
 
 
+def _default_args() -> argparse.Namespace:
+    return argparse.Namespace(
+        backend="auto",
+        model=None,
+        gpt_model=DEFAULT_VLLM_GPT_MODEL,
+        max_concurrency=1,
+        device="auto",
+        gpu_memory_utilization=0.65,
+        cpu_offload_gb=0.0,
+        swap_space=0.0,
+        vllm_logging_level="warn",
+        mlx_voice="Chelsie",
+        mlx_ref_text=None,
+        mlx_instruct=None,
+        mlx_max_tokens=1200,
+        mlx_lazy=False,
+    )
+
+
 async def ensure_tts_engine(args=None) -> TTS:
-    """Ensure TTS engine is initialized (lazy loading with thread safety).
+    """Create the selected engine on first use, with concurrent init protection."""
 
-    Args:
-        args: Optional argparse.Namespace with model configuration
+    global tts_engine, last_activity_time, initializing, active_model_name
 
-    Returns:
-        Initialized TTS engine
-
-    Raises:
-        RuntimeError: If initialization fails
-    """
-    global tts_engine, last_activity_time, initializing
-
-    # Fast path: engine already exists
     if tts_engine is not None:
         return tts_engine
 
-    # Acquire lock for initialization
     async with init_lock:
-        # Double-check after acquiring lock
         if tts_engine is not None:
             return tts_engine
 
         if initializing:
-            # Wait for another task to complete initialization
             while initializing:
                 await asyncio.sleep(0.01)
+            if tts_engine is None:
+                raise RuntimeError("TTS initialization failed in another request")
             return tts_engine
 
         initializing = True
         try:
-            # Use provided args or defaults
-            if args is None:
-                if server_args is not None:
-                    args = server_args
-                else:
-                    args = argparse.Namespace(
-                        model="AstraMindAI/xttsv2",
-                        gpt_model="AstraMindAI/xtts2-gpt",
-                        max_concurrency=1,
-                        device="auto",
-                        gpu_memory_utilization=0.65,
-                        cpu_offload_gb=0.0,
-                        swap_space=0.0,
-                        vllm_logging_level="warn",
-                    )
-
+            args = args or server_args or _default_args()
             logging_level = logger_str_to_logging.get(
                 args.vllm_logging_level, logging.WARNING
             )
 
-            # Initialize TTS engine in a thread to avoid event loop conflict
-            logging.info("Initializing TTS engine (lazy loading in thread)...")
-
-            def create_tts_engine():
-                """Synchronous TTS engine creation."""
-                scheduler_concurrency = (
-                    1 if args.device == "cpu" else max(1, args.max_concurrency)
-                )
-
-                return TTS(
-                    scheduler_max_concurrency=scheduler_concurrency,
+            def create_tts_engine() -> tuple[TTS, str]:
+                engine = TTS(
+                    scheduler_max_concurrency=max(1, args.max_concurrency),
                     vllm_logging_level=logging_level,
-                ).from_pretrained(
-                    args.model,
-                    gpt_model=args.gpt_model,
-                    device_map=args.device,
-                    max_concurrency=scheduler_concurrency,
-                    gpu_memory_utilization=args.gpu_memory_utilization,
-                    cpu_offload_gb=args.cpu_offload_gb,
-                    swap_space=args.swap_space,
+                    backend=args.backend,
                 )
 
-            # Run synchronous initialization in thread pool
-            tts_engine = await asyncio.to_thread(create_tts_engine)
+                if engine.backend_name == "mlx":
+                    model_name = args.model or DEFAULT_MLX_MODEL
+                    loaded = engine.from_pretrained(
+                        model_name,
+                        voice=args.mlx_voice,
+                        ref_text=args.mlx_ref_text,
+                        instruct=args.mlx_instruct,
+                        max_tokens=args.mlx_max_tokens,
+                        lazy=args.mlx_lazy,
+                    )
+                else:
+                    model_name = args.model or DEFAULT_VLLM_MODEL
+                    scheduler_concurrency = (
+                        1 if args.device == "cpu" else max(1, args.max_concurrency)
+                    )
+                    loaded = engine.from_pretrained(
+                        model_name,
+                        gpt_model=args.gpt_model,
+                        device_map=args.device,
+                        max_concurrency=scheduler_concurrency,
+                        gpu_memory_utilization=args.gpu_memory_utilization,
+                        cpu_offload_gb=args.cpu_offload_gb,
+                        swap_space=args.swap_space,
+                    )
+                return loaded, model_name
 
-            # Update activity time
+            logging.info("Initializing Auralis TTS backend lazily...")
+            tts_engine, active_model_name = await asyncio.to_thread(create_tts_engine)
             last_activity_time = time.time()
-            logging.info(f"TTS engine initialized successfully at {last_activity_time}")
-
+            logging.info(
+                "Auralis initialized: backend=%s model=%s",
+                tts_engine.backend_name,
+                active_model_name,
+            )
             return tts_engine
         finally:
             initializing = False
 
 
-async def shutdown_tts_engine():
-    """Shutdown TTS engine and release resources."""
-    global tts_engine, last_activity_time, shutting_down
+async def shutdown_tts_engine() -> None:
+    """Release the active model and backend caches."""
+
+    global tts_engine, last_activity_time, shutting_down, active_model_name
 
     async with shutdown_lock:
         if tts_engine is None or shutting_down:
             return
 
         shutting_down = True
+        engine = tts_engine
         try:
-            logging.info("Shutting down TTS engine due to inactivity...")
-            await tts_engine.shutdown()
-            tts_engine = None
-            last_activity_time = 0.0
-            logging.info("TTS engine shut down successfully, VRAM released")
-        except Exception as e:
-            logging.error(f"Error during TTS engine shutdown: {e}")
-            # Even if shutdown fails, clear the reference to allow reinitialization
-            tts_engine = None
+            logging.info("Shutting down inactive Auralis engine...")
+            await engine.shutdown()
+        except Exception:
+            logging.exception("Error while shutting down the TTS engine")
         finally:
+            tts_engine = None
+            active_model_name = None
+            last_activity_time = 0.0
             shutting_down = False
 
 
-async def cleanup_inactive_engine():
-    """Check for inactivity and shutdown TTS engine if timeout exceeded."""
-    global tts_engine, last_activity_time
-
+async def cleanup_inactive_engine() -> None:
     if tts_engine is None or last_activity_time == 0:
         return
-
-    current_time = time.time()
-    time_since_activity = current_time - last_activity_time
-
-    if time_since_activity > INACTIVITY_TIMEOUT:
-        logging.info(
-            f"TTS engine inactive for {time_since_activity:.1f}s (> {INACTIVITY_TIMEOUT}s), triggering shutdown"
-        )
+    if time.time() - last_activity_time > INACTIVITY_TIMEOUT:
         await shutdown_tts_engine()
 
 
-async def cleanup_worker():
-    """Background task that periodically checks for inactivity."""
+async def cleanup_worker() -> None:
     while True:
         try:
             await cleanup_inactive_engine()
-        except Exception as e:
-            logging.error(f"Error in cleanup worker: {e}")
-
+        except Exception:
+            logging.exception("Error in Auralis inactivity cleanup")
         await asyncio.sleep(CLEANUP_CHECK_INTERVAL)
 
 
 @asynccontextmanager
 async def lifecycle_manager(app: FastAPI):
-    """FastAPI lifespan manager for startup/shutdown.
-
-    Starts cleanup task on startup, shuts down TTS engine on shutdown.
-    """
+    del app
     global cleanup_task
 
-    # Start cleanup task
     cleanup_task = asyncio.create_task(cleanup_worker())
-    logging.info(
-        f"Started inactivity cleanup task (timeout={INACTIVITY_TIMEOUT}s, check_interval={CLEANUP_CHECK_INTERVAL}s)"
-    )
-
-    yield  # App runs here
-
-    # Shutdown cleanup task
-    if cleanup_task:
-        cleanup_task.cancel()
-        try:
-            await cleanup_task
-        except asyncio.CancelledError:
-            pass
-        cleanup_task = None
-
-    # Shutdown TTS engine if exists
-    await shutdown_tts_engine()
+    try:
+        yield
+    finally:
+        if cleanup_task:
+            cleanup_task.cancel()
+            try:
+                await cleanup_task
+            except asyncio.CancelledError:
+                pass
+            cleanup_task = None
+        await shutdown_tts_engine()
 
 
-# Initialize FastAPI application
-app = FastAPI(lifespan=lifecycle_manager)
-
-# Add CORS middleware to allow frontend requests
+app = FastAPI(
+    title="Auralis Enhanced",
+    description="OpenAI-compatible TTS with optional CUDA/vLLM and Apple MLX backends",
+    lifespan=lifecycle_manager,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -226,370 +215,255 @@ app.add_middleware(
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint with detailed status."""
-    global tts_engine, last_activity_time
+    current_time = time.time()
+    elapsed = current_time - last_activity_time if last_activity_time else 0.0
+    remaining = max(0.0, INACTIVITY_TIMEOUT - elapsed) if tts_engine else 0.0
+    configured_backend = getattr(server_args, "backend", "auto")
 
-    try:
-        current_time = time.time()
-        time_since_activity = (
-            current_time - last_activity_time if last_activity_time > 0 else 0
-        )
-        time_until_shutdown = (
-            max(0, INACTIVITY_TIMEOUT - time_since_activity) if tts_engine else 0
-        )
-
-        return {
-            "status": "healthy",
-            "tts_engine": {
-                "initialized": tts_engine is not None,
-                "status": "active" if tts_engine else "inactive",
-                "time_since_last_activity": f"{time_since_activity:.1f}s",
-                "time_until_shutdown": f"{time_until_shutdown:.1f}s"
-                if tts_engine
-                else "N/A",
-                "initializing": initializing,
-                "shutting_down": shutting_down,
-            },
-            "server": {
-                "inactivity_timeout": f"{INACTIVITY_TIMEOUT}s",
-                "cleanup_check_interval": f"{CLEANUP_CHECK_INTERVAL}s",
-            },
-        }
-    except NameError as e:
-        return {
-            "status": "error",
-            "error": f"NameError: {e}",
-            "message": "Global variables not found in scope",
-        }
-
-
-def start_tts_engine(args, logging_level):
-    """Initialize the Text-to-Speech engine with specified parameters
-
-    Args:
-        args: Parsed command line arguments containing model configurations
-        logging_level: Logging level for the TTS engine
-    """
-    global tts_engine
-    tts_engine = TTS(
-        scheduler_max_concurrency=args.max_concurrency, vllm_logging_level=logging_level
-    ).from_pretrained(args.model, gpt_model=args.gpt_model)
+    return {
+        "status": "healthy",
+        "tts_engine": {
+            "initialized": tts_engine is not None,
+            "status": "active" if tts_engine else "inactive",
+            "backend": tts_engine.backend_name if tts_engine else configured_backend,
+            "model": active_model_name,
+            "time_since_last_activity_seconds": round(elapsed, 1),
+            "time_until_shutdown_seconds": round(remaining, 1) if tts_engine else None,
+            "initializing": initializing,
+            "shutting_down": shutting_down,
+        },
+        "server": {
+            "inactivity_timeout_seconds": INACTIVITY_TIMEOUT,
+            "cleanup_check_interval_seconds": CLEANUP_CHECK_INTERVAL,
+        },
+    }
 
 
 @app.post("/v1/audio/speech")
 async def generate_audio(request: AudioSpeechGenerationRequest):
-    """Generate audio from text using the TTS engine
-
-    Args:
-        request: Audio speech generation request containing text and parameters
-
-    Returns:
-        Response containing generated audio in requested format
-
-    Raises:
-        HTTPException: If TTS engine is not initialized or generation fails
-    """
     global last_activity_time
 
     try:
-        # Lazy initialize TTS engine if needed (uses global server_args)
         tts = await ensure_tts_engine()
-
-        # Update activity time
+        last_activity_time = time.time()
+        tts_request = request.to_tts_request(backend=tts.backend_name)
+        output = await tts.generate_speech_async(tts_request)
         last_activity_time = time.time()
 
-        print(f"DEBUG: tts_engine = {tts}, type = {type(tts)}")
-        print("DEBUG: Creating TTS request...")
-
-        # Create TTSRequest with default params and auralis overrides
-        tts_request = request.to_tts_request()
-        print("DEBUG: TTS request created successfully")
-
-        # Generate speech and adjust speed
-        output = await tts.generate_speech_async(tts_request)
-        if request.speed != 1.0:
-            output.change_speed(request.speed)
-        audio_bytes = output.to_bytes(request.response_format)
+        if request.speed != 1.0 and tts.backend_name != "mlx":
+            output = output.change_speed(request.speed)
 
         return Response(
-            content=audio_bytes, media_type=f"audio/{request.response_format}"
+            content=output.to_bytes(request.response_format),
+            media_type=f"audio/{request.response_format}",
         )
-
-    except Exception as e:
-        import traceback
-
-        tb = traceback.format_exc()
-        print(f"ERROR in generate_audio: {e}")
-        print(f"Traceback:\n{tb}")
+    except Exception as exc:
+        logging.exception("Audio generation failed")
         return JSONResponse(
             status_code=500,
-            content={"error": f"Error generating audio: {str(e)}", "traceback": tb},
+            content={"error": f"Error generating audio: {exc}"},
         )
 
 
 @app.post("/v1/chat/completions")
 async def chat_completions(
-    request: VoiceChatCompletionRequest, authorization: Optional[str] = Header(None)
+    request: VoiceChatCompletionRequest,
+    authorization: Optional[str] = Header(None),
 ):
-    """Handle chat completions with optional audio generation
+    """Proxy an OpenAI-compatible text stream and optionally vocalize chunks."""
 
-    Args:
-        request: Voice chat completion request containing prompt and parameters
-        authorization: Bearer token for API authentication
-
-    Returns:
-        StreamingResponse containing text and/or audio chunks
-
-    Raises:
-        HTTPException: If TTS engine is not initialized or request fails
-    """
     global last_activity_time
 
-    # Lazy initialize TTS engine if needed (uses global server_args)
-    tts = await ensure_tts_engine()
-
-    # Update activity time
-    last_activity_time = time.time()
-
-    # Validate authorization header
     if not authorization or not authorization.startswith("Bearer "):
         return JSONResponse(
             status_code=400,
             content={"error": "Authorization header with Bearer token is required"},
         )
+
     try:
-        # Extract request parameters
+        tts = await ensure_tts_engine()
+        last_activity_time = time.time()
         openai_api_key = authorization[len("Bearer ") :]
         modalities = request.modalities
-        num_of_token_to_vocalize = request.vocalize_at_every_n_words
-
-        # Initialize TTS request with auralis parameters
+        vocalize_every = request.vocalize_at_every_n_words
         tts_request = request.to_tts_request(text="")
-
-        # Prepare OpenAI request
         openai_request_data = request.to_openai_request()
-
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {openai_api_key}",
         }
-
         request_id = uuid.uuid4().hex
 
-        # Validate requested modalities
-        valid_modalities = ["text", "audio"]
-        if not all(m in valid_modalities for m in modalities):
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "error": f"Invalid modalities. Must be one or more of {valid_modalities}"
-                },
-            )
-
         async def stream_generator():
-            """Generator function for streaming text and audio responses
-
-            Yields:
-                JSON-formatted strings containing text chunks and/or audio data
-            """
             accumulated_content = ""
-
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.post(
                         request.openai_api_url,
                         json=openai_request_data,
                         headers=headers,
-                    ) as resp:
-                        if resp.status != 200:
-                            error_response = await resp.text()
+                    ) as response:
+                        if response.status != 200:
+                            error_response = await response.text()
                             raise HTTPException(
-                                status_code=resp.status, detail=error_response
+                                status_code=response.status, detail=error_response
                             )
 
-                        # Process streaming response line by line
-                        async for line in resp.content:
-                            if not line:
+                        async for raw_line in response.content:
+                            if not raw_line:
                                 continue
-
-                            line = line.decode("utf-8").strip()
+                            line = raw_line.decode("utf-8").strip()
                             if not line.startswith("data:"):
                                 continue
-
                             data_str = line[5:].strip()
                             if data_str == "[DONE]":
                                 break
 
                             try:
                                 data = json.loads(data_str)
-                                content = (
-                                    data.get("choices", [{}])[0]
-                                    .get("delta", {})
-                                    .get("content", "")
-                                )
-
-                                if content:
-                                    # Accumulate content and handle text/audio generation
-                                    accumulated_content += content
-                                    # Stream text if requested
-                                    if "text" in modalities:
-                                        yield f"data: {json.dumps(data)}\n\n"
-
-                                    # Generate audio when word threshold is reached
-                                    if (
-                                        len(accumulated_content.split())
-                                        >= num_of_token_to_vocalize
-                                    ):
-                                        if "audio" in modalities:
-                                            tts_request.text = accumulated_content
-                                            tts_request.infer_language()
-                                            audio_output = (
-                                                await tts.generate_speech_async(
-                                                    tts_request
-                                                )
-                                            )
-                                            audio_base64 = base64.b64encode(
-                                                audio_output.to_bytes()
-                                            ).decode("utf-8")
-                                            yield f"data: {json.dumps({'id': request_id, 'object': 'audio.chunk', 'data': audio_base64})}\n\n"
-
-                                        accumulated_content = ""
-                                elif "text" in modalities:
-                                    # Stream non-content text events
-                                    yield f"data: {json.dumps(data)}\n\n"
-
                             except json.JSONDecodeError:
                                 continue
 
-                # Process any remaining content for audio
+                            content = (
+                                data.get("choices", [{}])[0]
+                                .get("delta", {})
+                                .get("content", "")
+                            )
+                            if content:
+                                accumulated_content += content
+                                if "text" in modalities:
+                                    yield f"data: {json.dumps(data)}\n\n"
+
+                                if len(accumulated_content.split()) >= vocalize_every:
+                                    if "audio" in modalities:
+                                        tts_request.text = accumulated_content
+                                        tts_request.infer_language()
+                                        audio_output = await tts.generate_speech_async(
+                                            tts_request
+                                        )
+                                        audio_base64 = base64.b64encode(
+                                            audio_output.to_bytes()
+                                        ).decode("utf-8")
+                                        payload = {
+                                            "id": request_id,
+                                            "object": "audio.chunk",
+                                            "data": audio_base64,
+                                        }
+                                        yield f"data: {json.dumps(payload)}\n\n"
+                                    accumulated_content = ""
+                            elif "text" in modalities:
+                                yield f"data: {json.dumps(data)}\n\n"
+
                 if accumulated_content and "audio" in modalities:
                     tts_request.text = accumulated_content
                     tts_request.infer_language()
                     audio_output = await tts.generate_speech_async(tts_request)
-                    audio_base64 = base64.b64encode(audio_output.to_bytes()).decode(
-                        "utf-8"
-                    )
-                    yield f"data: {json.dumps({'id': request_id, 'object': 'audio.chunk', 'data': audio_base64})}\n\n"
+                    audio_base64 = base64.b64encode(
+                        audio_output.to_bytes()
+                    ).decode("utf-8")
+                    payload = {
+                        "id": request_id,
+                        "object": "audio.chunk",
+                        "data": audio_base64,
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
 
-                # Send completion messages for text modality
                 if "text" in modalities:
-                    yield f"data: {json.dumps({'id': request_id, 'object': 'chat.completion.chunk', 'choices': [{'delta': {}, 'index': 0, 'finish_reason': 'stop'}]})}\n\n"
+                    completion = {
+                        "id": request_id,
+                        "object": "chat.completion.chunk",
+                        "choices": [
+                            {"delta": {}, "index": 0, "finish_reason": "stop"}
+                        ],
+                    }
+                    yield f"data: {json.dumps(completion)}\n\n"
                 yield "data: [DONE]\n\n"
-
-            except Exception as e:
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
-            finally:
-                pass
+            except Exception as exc:
+                logging.exception("Chat/audio streaming failed")
+                yield f"data: {json.dumps({'error': str(exc)})}\n\n"
 
         return StreamingResponse(stream_generator(), media_type="text/event-stream")
-
-    except Exception as e:
+    except Exception as exc:
+        logging.exception("Chat completion setup failed")
         return JSONResponse(
-            status_code=500, content={"error": f"Error in chat completions: {str(e)}"}
+            status_code=500,
+            content={"error": f"Error in chat completions: {exc}"},
         )
 
 
-def main():
-    """Main function to configure and start the FastAPI server"""
-    # Set up command line argument parser
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Auralis TTS FastAPI Server with inactivity timeout"
+        description="Auralis Enhanced OpenAI-compatible TTS server"
     )
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=9950)
     parser.add_argument(
-        "--host", type=str, default="0.0.0.0", help="Host to run the server on"
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=9950,
-        help="Port to run the server on (default: 9950)",
-    )
-    parser.add_argument(
-        "--model", type=str, default="AstraMindAI/xttsv2", help="The base model to run"
-    )
-    parser.add_argument(
-        "--gpt_model",
-        type=str,
-        default="AstraMindAI/xtts2-gpt",
-        help="The gpt model to load alongside the base model, if present",
-    )
-    parser.add_argument(
-        "--max_concurrency",
-        type=int,
-        default=1,
-        help="The concurrency value that is used in the TTS Engine, it is directly connected to the memory consumption",
-    )
-    parser.add_argument(
-        "--device",
-        type=str,
-        choices=["auto", "cuda", "cpu"],
+        "--backend",
+        choices=["auto", "vllm", "cuda", "mlx"],
         default="auto",
-        help="Target device for inference",
+        help="Inference backend. auto chooses MLX on Apple Silicon and vLLM elsewhere.",
     )
     parser.add_argument(
-        "--gpu_memory_utilization",
-        type=float,
-        default=0.65,
-        help="Fraction of GPU memory reserved by vLLM",
+        "--model",
+        default=None,
+        help=(
+            "Model path or Hugging Face repo. Defaults to XTTS for vLLM and an "
+            "8-bit Qwen3-TTS model for MLX."
+        ),
+    )
+    parser.add_argument("--gpt_model", default=DEFAULT_VLLM_GPT_MODEL)
+    parser.add_argument("--max_concurrency", type=int, default=1)
+    parser.add_argument(
+        "--device", choices=["auto", "cuda", "cpu"], default="auto"
+    )
+    parser.add_argument("--gpu_memory_utilization", type=float, default=0.65)
+    parser.add_argument("--cpu_offload_gb", type=float, default=0.0)
+    parser.add_argument("--swap_space", type=float, default=0.0)
+    parser.add_argument("--vllm_logging_level", default="warn")
+
+    parser.add_argument(
+        "--mlx_voice",
+        default="Chelsie",
+        help="Default speaker/voice for MLX models that expose named voices.",
     )
     parser.add_argument(
-        "--cpu_offload_gb",
-        type=float,
-        default=0.0,
-        help="CPU offload in GiB per GPU for vLLM",
+        "--mlx_ref_text",
+        default=None,
+        help="Default transcript used with MLX reference-audio voice cloning.",
     )
     parser.add_argument(
-        "--swap_space",
-        type=float,
-        default=0.0,
-        help="CPU swap space in GiB per GPU for vLLM",
+        "--mlx_instruct",
+        default=None,
+        help="Default style or voice-design instruction for compatible MLX models.",
     )
+    parser.add_argument("--mlx_max_tokens", type=int, default=1200)
     parser.add_argument(
-        "--vllm_logging_level",
-        type=str,
-        default="warn",
-        help="The vllm logging level, could be one of [info | warn | err]",
-    )
-    parser.add_argument(
-        "--inactivity_timeout",
-        type=int,
-        default=300,
-        help="Seconds of inactivity before TTS engine shuts down (default: 300 = 5 minutes)",
-    )
-    parser.add_argument(
-        "--cleanup_interval",
-        type=int,
-        default=30,
-        help="Seconds between inactivity checks (default: 30)",
+        "--mlx_lazy",
+        action="store_true",
+        help="Defer MLX parameter evaluation until first generation.",
     )
 
-    args = parser.parse_args()
+    parser.add_argument("--inactivity_timeout", type=int, default=300)
+    parser.add_argument("--cleanup_interval", type=int, default=30)
+    return parser
 
-    # Store args globally
-    global server_args
+
+def main() -> None:
+    args = _build_parser().parse_args()
+
+    global server_args, INACTIVITY_TIMEOUT, CLEANUP_CHECK_INTERVAL
     server_args = args
+    INACTIVITY_TIMEOUT = max(0, args.inactivity_timeout)
+    CLEANUP_CHECK_INTERVAL = max(1, args.cleanup_interval)
 
-    # Update global configuration
-    global INACTIVITY_TIMEOUT, CLEANUP_CHECK_INTERVAL
-    INACTIVITY_TIMEOUT = args.inactivity_timeout
-    CLEANUP_CHECK_INTERVAL = args.cleanup_interval
-
-    # Log configuration
     logging.basicConfig(level=logging.INFO)
-    logging.info(f"Starting Auralis TTS server on port {args.port}")
     logging.info(
-        f"Inactivity timeout: {INACTIVITY_TIMEOUT}s, Cleanup interval: {CLEANUP_CHECK_INTERVAL}s"
+        "Starting Auralis on %s:%s (backend=%s, lazy model loading enabled)",
+        args.host,
+        args.port,
+        args.backend,
     )
-    logging.info(
-        "TTS engine will load on first request and auto-shutdown after inactivity"
-    )
-
-    # Start the FastAPI server (TTS engine loads lazily on first request)
-    uvicorn.run(
-        app,
-        host=args.host,
-        port=args.port,
-    )
+    uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

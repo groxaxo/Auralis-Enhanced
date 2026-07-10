@@ -2,6 +2,36 @@
 
 All notable changes to Auralis Enhanced will be documented in this file.
 
+## [Unreleased] - 2026-07-10
+
+### Added
+
+- Optional **Apple Silicon MLX backend** powered by `mlx-audio`.
+- Automatic backend resolution: MLX on native Apple Silicon, vLLM elsewhere.
+- MLX-native named voices, reference-audio cloning, style instructions, quantized checkpoints, streaming, and model-specific `backend_kwargs`.
+- Apple Silicon installation extra (`.[mlx]`) and `requirements-mlx.txt`.
+- OpenAI-compatible server flags for MLX model, voice, lazy loading, instructions, reference transcript, and token limit.
+- Backend-selection and fake-model MLX adapter unit tests.
+- A dedicated `examples/mlx_macos.py` example.
+
+### Changed
+
+- vLLM and NVIDIA dependencies are now isolated in the optional `cuda` extra.
+- Model imports are lazy, allowing the package to import on macOS without vLLM.
+- Removed the Linux-only installation guard from `setup.py`.
+- `TTSRequest.speaker_files` is optional for models with built-in named voices.
+- OpenAI voice resolution is portable and no longer depends on `/home/op/...` paths.
+- Server health output reports the resolved backend and active model.
+- Server errors are logged without returning internal tracebacks to API clients.
+
+### Compatibility
+
+- Existing Linux/NVIDIA behavior remains available through `backend="vllm"` or `backend="cuda"`.
+- MLX requires an MLX-native checkpoint; XTTS/vLLM checkpoints are not converted implicitly.
+- NovaSR remains an optional PyTorch post-processing stage and is separate from MLX inference.
+
+---
+
 ## [2.0.0] - 2026-03-02
 
 ### 🚀 Major Change: FlashSR → NovaSR Migration
