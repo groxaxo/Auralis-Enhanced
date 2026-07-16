@@ -1,0 +1,42 @@
+name: Benchmark tooling checks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'wer_benchmark.py'
+      - 'auralis-enhanced.service'
+      - 'tests/unit/test_wer_benchmark.py'
+      - '.github/workflows/benchmark-tooling.yml'
+  pull_request:
+    paths:
+      - 'wer_benchmark.py'
+      - 'auralis-enhanced.service'
+      - 'tests/unit/test_wer_benchmark.py'
+      - '.github/workflows/benchmark-tooling.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install lightweight test dependencies
+        run: python -m pip install --upgrade pytest requests
+      - name: Compile benchmark
+        run: python -m py_compile wer_benchmark.py
+      - name: Run benchmark unit tests
+        run: pytest -q tests/unit/test_wer_benchmark.py
+      - name: Reject invalid three-GPU selector and port drift
+        run: |
+          ! grep -q '^Environment=CUDA_VISIBLE_DEVICES=3$' auralis-enhanced.service
+          grep -q -- '--port 6688' auralis-enhanced.service
+          grep -q 'DEFAULT_AURALIS_URL = "http://127.0.0.1:6688"' wer_benchmark.py
