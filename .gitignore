@@ -155,3 +155,8 @@ generated_audio/
 !docs/**/*.mp3
 !docs/**/*.wav
 NovaSR/
+
+# Generated benchmark runs (historical tracked evidence remains tracked)
+/benchmark_outputs/results_*.json
+/benchmark_outputs/summary_*.json
+/benchmark_outputs/*.tmp
