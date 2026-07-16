@@ -1,20 +1,26 @@
 [Unit]
 Description=Auralis Enhanced OpenAI-compatible TTS API
-After=network.target nvidia-persistenced.service nvidia-power-limit.service
-Wants=nvidia-persistenced.service
+After=network-online.target nvidia-persistenced.service
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=op
 WorkingDirectory=/home/op/Auralis-Enhanced
 Environment=CUDA_DEVICE_ORDER=PCI_BUS_ID
-Environment=CUDA_VISIBLE_DEVICES=3
-Environment=PATH=/home/op/miniconda3/envs/auralis-enhanced/bin:/home/op/miniconda3/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-Environment=LD_LIBRARY_PATH=/home/op/miniconda3/envs/auralis-enhanced/lib/python3.10/site-packages/nvidia/nvjitlink/lib:/home/op/miniconda3/envs/auralis-enhanced/lib/python3.10/site-packages/nvidia/cusparse/lib:/home/op/miniconda3/envs/auralis-enhanced/lib/python3.10/site-packages/nvidia/cublas/lib:/home/op/miniconda3/envs/auralis-enhanced/lib/python3.10/site-packages/nvidia/cudnn/lib
-ExecStart=/home/op/miniconda3/envs/auralis-enhanced/bin/auralis.openai --host 0.0.0.0 --port 6688 --device cuda --gpu_memory_utilization 0.65 --cpu_offload_gb 0 --swap_space 0 --inactivity_timeout 300 --cleanup_interval 30
-Restart=always
+# This host has three CUDA GPUs (0-2); use the otherwise-free third GPU by default.
+# /etc/default/auralis-enhanced may override this and any other Environment value.
+Environment=CUDA_VISIBLE_DEVICES=2
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/default/auralis-enhanced
+ExecStartPre=/usr/bin/test -x /home/op/miniconda3/envs/auralis-enhanced/bin/auralis.openai
+ExecStart=/home/op/miniconda3/envs/auralis-enhanced/bin/auralis.openai --host 0.0.0.0 --port 6688 --backend vllm --device cuda --gpu_memory_utilization 0.65 --cpu_offload_gb 0 --swap_space 0 --inactivity_timeout 300 --cleanup_interval 30
+Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
+KillSignal=SIGINT
+NoNewPrivileges=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
