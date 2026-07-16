@@ -1,0 +1,20 @@
+[Unit]
+Description=Auralis Enhanced OpenAI-compatible TTS API
+After=network.target nvidia-persistenced.service nvidia-power-limit.service
+Wants=nvidia-persistenced.service
+
+[Service]
+Type=simple
+User=op
+WorkingDirectory=/home/op/Auralis-Enhanced
+Environment=CUDA_DEVICE_ORDER=PCI_BUS_ID
+Environment=CUDA_VISIBLE_DEVICES=3
+Environment=PATH=/home/op/miniconda3/envs/auralis-enhanced/bin:/home/op/miniconda3/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=LD_LIBRARY_PATH=/home/op/miniconda3/envs/auralis-enhanced/lib/python3.10/site-packages/nvidia/nvjitlink/lib:/home/op/miniconda3/envs/auralis-enhanced/lib/python3.10/site-packages/nvidia/cusparse/lib:/home/op/miniconda3/envs/auralis-enhanced/lib/python3.10/site-packages/nvidia/cublas/lib:/home/op/miniconda3/envs/auralis-enhanced/lib/python3.10/site-packages/nvidia/cudnn/lib
+ExecStart=/home/op/miniconda3/envs/auralis-enhanced/bin/auralis.openai --host 0.0.0.0 --port 6688 --device cuda --gpu_memory_utilization 0.65 --cpu_offload_gb 0 --swap_space 0 --inactivity_timeout 300 --cleanup_interval 30
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

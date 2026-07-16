@@ -1,0 +1,77 @@
+{
+  "output_dir": "/home/op/Auralis-Enhanced/bench_outputs",
+  "count": 5,
+  "total_wall_seconds": 4.269296378130093,
+  "total_audio_seconds": 28.16,
+  "overall_rtf": 0.15160853615518796,
+  "overall_speed_x_realtime": 6.595934670699481,
+  "mean_rtf": 0.15030938183202563,
+  "mean_speed_x_realtime": 6.713168679288169,
+  "results": [
+    {
+      "file": "/home/op/Auralis-Enhanced/bench_outputs/sample_1_en_alloy.wav",
+      "language": "en",
+      "voice": "alloy",
+      "chars": 93,
+      "status": 200,
+      "generation_wall_seconds": 0.8003614409826696,
+      "curl_time_seconds": 0.795536,
+      "audio_duration_seconds": 5.664,
+      "rtf": 0.14130675158592332,
+      "speed_x_realtime": 7.076802691851123,
+      "bytes": 271950
+    },
+    {
+      "file": "/home/op/Auralis-Enhanced/bench_outputs/sample_2_en_echo.wav",
+      "language": "en",
+      "voice": "echo",
+      "chars": 96,
+      "status": 200,
+      "generation_wall_seconds": 0.7702755200443789,
+      "curl_time_seconds": 0.764954,
+      "audio_duration_seconds": 5.237333,
+      "rtf": 0.14707400122245023,
+      "speed_x_realtime": 6.799298255899726,
+      "bytes": 251470
+    },
+    {
+      "file": "/home/op/Auralis-Enhanced/bench_outputs/sample_3_es_nova.wav",
+      "language": "es",
+      "voice": "nova",
+      "chars": 100,
+      "status": 200,
+      "generation_wall_seconds": 0.7599694010568783,
+      "curl_time_seconds": 0.755891,
+      "audio_duration_seconds": 5.290667,
+      "rtf": 0.14364340092787511,
+      "speed_x_realtime": 6.96168423707895,
+      "bytes": 254030
+    },
+    {
+      "file": "/home/op/Auralis-Enhanced/bench_outputs/sample_4_en_shimmer.wav",
+      "language": "en",
+      "voice": "shimmer",
+      "chars": 99,
+      "status": 200,
+      "generation_wall_seconds": 0.742774430080317,
+      "curl_time_seconds": 0.737658,
+      "audio_duration_seconds": 5.333333,
+      "rtf": 0.13927021434444783,
+      "speed_x_realtime": 7.180286213438043,
+      "bytes": 256078
+    },
+    {
+      "file": "/home/op/Auralis-Enhanced/bench_outputs/sample_5_es_onyx.wav",
+      "language": "es",
+      "voice": "onyx",
+      "chars": 96,
+      "status": 200,
+      "generation_wall_seconds": 1.1959155859658495,
+      "curl_time_seconds": 1.19174,
+      "audio_duration_seconds": 6.634667,
+      "rtf": 0.18025254107943162,
+      "speed_x_realtime": 5.547771998173005,
+      "bytes": 318542
+    }
+  ]
+}

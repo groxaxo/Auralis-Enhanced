@@ -1,0 +1,82 @@
+{
+  "output_dir": "/home/op/Auralis-Enhanced/bench_outputs/short_sentences",
+  "count": 5,
+  "total_wall_seconds": 1.3037817379226908,
+  "total_audio_seconds": 6.517332,
+  "overall_rtf": 0.20004838451112983,
+  "overall_speed_x_realtime": 4.998790679783592,
+  "mean_rtf": 0.20593568039637378,
+  "mean_speed_x_realtime": 4.898832227617695,
+  "results": [
+    {
+      "file": "/home/op/Auralis-Enhanced/bench_outputs/short_sentences/short_1_en_alloy.wav",
+      "text": "Hello there.",
+      "language": "en",
+      "voice": "alloy",
+      "chars": 12,
+      "status": 200,
+      "generation_wall_seconds": 0.31391111004631966,
+      "curl_time_seconds": 0.30936,
+      "audio_duration_seconds": 1.717333,
+      "rtf": 0.18278988993184178,
+      "speed_x_realtime": 5.470762088498862,
+      "bytes": 82510
+    },
+    {
+      "file": "/home/op/Auralis-Enhanced/bench_outputs/short_sentences/short_2_en_echo.wav",
+      "text": "How are you?",
+      "language": "en",
+      "voice": "echo",
+      "chars": 12,
+      "status": 200,
+      "generation_wall_seconds": 0.22010458901058882,
+      "curl_time_seconds": 0.214171,
+      "audio_duration_seconds": 1.013333,
+      "rtf": 0.21720854744747167,
+      "speed_x_realtime": 4.603870389777518,
+      "bytes": 48718
+    },
+    {
+      "file": "/home/op/Auralis-Enhanced/bench_outputs/short_sentences/short_3_es_nova.wav",
+      "text": "Hola amigo.",
+      "language": "es",
+      "voice": "nova",
+      "chars": 11,
+      "status": 200,
+      "generation_wall_seconds": 0.16489216894842684,
+      "curl_time_seconds": 0.158918,
+      "audio_duration_seconds": 0.693333,
+      "rtf": 0.23782535801473006,
+      "speed_x_realtime": 4.20476608696228,
+      "bytes": 33358
+    },
+    {
+      "file": "/home/op/Auralis-Enhanced/bench_outputs/short_sentences/short_4_en_shimmer.wav",
+      "text": "See you soon.",
+      "language": "en",
+      "voice": "shimmer",
+      "chars": 13,
+      "status": 200,
+      "generation_wall_seconds": 0.3175527909770608,
+      "curl_time_seconds": 0.313162,
+      "audio_duration_seconds": 1.664,
+      "rtf": 0.19083701380832982,
+      "speed_x_realtime": 5.24007361069046,
+      "bytes": 79950
+    },
+    {
+      "file": "/home/op/Auralis-Enhanced/bench_outputs/short_sentences/short_5_es_onyx.wav",
+      "text": "Gracias.",
+      "language": "es",
+      "voice": "onyx",
+      "chars": 8,
+      "status": 200,
+      "generation_wall_seconds": 0.2873210789402947,
+      "curl_time_seconds": 0.282281,
+      "audio_duration_seconds": 1.429333,
+      "rtf": 0.20101759277949555,
+      "speed_x_realtime": 4.974688962159353,
+      "bytes": 68686
+    }
+  ]
+}

@@ -1,0 +1,802 @@
+{
+  "en_00": {
+    "text": "The quick brown fox jumps over the lazy dog near the river bank.",
+    "lang": "en",
+    "latency_s": 5.23485419699864,
+    "transcript": "The quick brown fox jumps over the lazy dog near the river bank.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_01": {
+    "text": "Artificial intelligence is transforming how we interact with technology every day.",
+    "lang": "en",
+    "latency_s": 5.711027785000624,
+    "transcript": "Artificial intelligence is transforming how we interact with technology every day.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_02": {
+    "text": "She carefully placed the delicate crystal vase on the mahogany shelf.",
+    "lang": "en",
+    "latency_s": 4.828466748993378,
+    "transcript": "She carefully placed the delicate crystal vase on the mahogany shell.",
+    "wer": 0.09090909090909091,
+    "success": true
+  },
+  "en_03": {
+    "text": "The astronauts completed their spacewalk and returned safely to the station.",
+    "lang": "en",
+    "latency_s": 5.605210277994047,
+    "transcript": "The astronauts completed their spacewalk, and returned safely to the station.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_04": {
+    "text": "Climate change poses significant challenges to ecosystems around the world.",
+    "lang": "en",
+    "latency_s": 5.770360651993542,
+    "transcript": "Climate change poses significant challenges to ecosystems around the world.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_05": {
+    "text": "He practiced the violin for three hours before the evening performance began.",
+    "lang": "en",
+    "latency_s": 5.710233748002793,
+    "transcript": "He practiced the violin for three hours before the evening performance began.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_06": {
+    "text": "The ancient library contained thousands of manuscripts written by hand.",
+    "lang": "en",
+    "latency_s": 4.961838538001757,
+    "transcript": "The ancient library contained thousands of manuscripts written by hand.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_07": {
+    "text": "Scientists discovered a new species of deep-sea fish in the Pacific Ocean.",
+    "lang": "en",
+    "latency_s": 6.000602822998189,
+    "transcript": "Scientists discovered a new species of deep sea fish in the Pacific Ocean.",
+    "wer": 0.16666666666666666,
+    "success": true
+  },
+  "en_08": {
+    "text": "The chef prepared a magnificent seven-course dinner for the visiting dignitaries.",
+    "lang": "en",
+    "latency_s": 6.239874981998582,
+    "transcript": "The chef prepared a magnificent seven course dinner, for the visiting dignitaries.",
+    "wer": 0.18181818181818182,
+    "success": true
+  },
+  "en_09": {
+    "text": "Modern cryptography relies on mathematical problems that are hard to reverse.",
+    "lang": "en",
+    "latency_s": 5.386946847997024,
+    "transcript": "Modern cryptography relies on mathematical problems that are hard to reverse.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_10": {
+    "text": "She read the entire novel in one sitting, unable to put it down.",
+    "lang": "en",
+    "latency_s": 5.115436097999918,
+    "transcript": "She read the entire novel in one sitting, unable to put it down.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_11": {
+    "text": "The thunderstorm knocked out power to the entire neighborhood for six hours.",
+    "lang": "en",
+    "latency_s": 6.204992009996204,
+    "transcript": "The thunderstorm knocked out power to the entire neighborhood for six hours.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_12": {
+    "text": "Children learn language naturally through immersion and constant exposure.",
+    "lang": "en",
+    "latency_s": 5.389336695006932,
+    "transcript": "Children learn language naturally through immersion and constant exposure.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_13": {
+    "text": "The bridge was constructed using advanced composite materials for durability.",
+    "lang": "en",
+    "latency_s": 5.636909399996512,
+    "transcript": "The bridge was constructed using advanced composite materials for durability.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_14": {
+    "text": "He solved the complex differential equation using Laplace transforms.",
+    "lang": "en",
+    "latency_s": 5.064650023996364,
+    "transcript": "He solved the complex differential equation using Laplace transforms.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_15": {
+    "text": "The concert hall filled with applause as the orchestra took its final bow.",
+    "lang": "en",
+    "latency_s": 6.555540800996823,
+    "transcript": "The concert hall filled with applause, as the orchestra took its final bow.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_16": {
+    "text": "Machine learning models can now generate realistic images from text descriptions.",
+    "lang": "en",
+    "latency_s": 5.060686723998515,
+    "transcript": "Machine learning models can now generate realistic images from text descriptions.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_17": {
+    "text": "The expedition team reached the summit just before the afternoon storm arrived.",
+    "lang": "en",
+    "latency_s": 5.3509720920119435,
+    "transcript": "The expedition team reached the summit just before the afternoon storm arrived.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_18": {
+    "text": "She built a small greenhouse in her backyard to grow tomatoes and herbs.",
+    "lang": "en",
+    "latency_s": 4.8256723700033035,
+    "transcript": "She built a small greenhouse in her backyard to grow tomatoes and herbs.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_19": {
+    "text": "The parliament voted unanimously to pass the new environmental protection bill.",
+    "lang": "en",
+    "latency_s": 5.350362015989958,
+    "transcript": "The Parliament voted unanimously to pass the new environmental protection bill.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_20": {
+    "text": "Neural networks process information in ways inspired by the human brain.",
+    "lang": "en",
+    "latency_s": 6.121758729001158,
+    "transcript": "Neural networks process information in ways inspired by the human brain.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_21": {
+    "text": "The vintage car needed new brake pads and a complete engine overhaul.",
+    "lang": "en",
+    "latency_s": 4.634865568994428,
+    "transcript": "The vintage car needed new brake pads and a complete engine overhaul.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_22": {
+    "text": "They spent the afternoon kayaking along the winding river through the forest.",
+    "lang": "en",
+    "latency_s": 5.559876394007006,
+    "transcript": "They spent the afternoon kayaking along the winding river through the forest.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_23": {
+    "text": "The professor explained the principles of quantum entanglement to the students.",
+    "lang": "en",
+    "latency_s": 4.976556224995875,
+    "transcript": "The prefer explained the principles of quantum entanglement to the students.",
+    "wer": 0.09090909090909091,
+    "success": true
+  },
+  "en_24": {
+    "text": "Fresh bread from the local bakery always sells out before noon on weekends.",
+    "lang": "en",
+    "latency_s": 6.053263071007677,
+    "transcript": "Fresh bread from the local bakery always sells out before noon on weekends.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_25": {
+    "text": "The documentary explored the cultural traditions of indigenous communities worldwide.",
+    "lang": "en",
+    "latency_s": 6.492932628010749,
+    "transcript": "The documentary explored the cultural traditions of indigenous communities worldwide.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_26": {
+    "text": "He installed solar panels on his roof to reduce his electricity bills.",
+    "lang": "en",
+    "latency_s": 4.753499830010696,
+    "transcript": "He installed solar panels on his roof to reduce his electricity bills.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_27": {
+    "text": "The hospital staff worked tirelessly during the unexpected surge in patients.",
+    "lang": "en",
+    "latency_s": 6.74952983300318,
+    "transcript": "The hospital staff worked tirelessly during the unexpected surge in patients.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_28": {
+    "text": "Photosynthesis converts sunlight into chemical energy stored in glucose molecules.",
+    "lang": "en",
+    "latency_s": 6.873293734010076,
+    "transcript": "Photosynthesis converts sunlight into chemical energy stored in glucose molecules.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_29": {
+    "text": "The hikers followed the marked trail through dense pine forest for eight miles.",
+    "lang": "en",
+    "latency_s": 6.183430445002159,
+    "transcript": "The hikers followed the marked trail, through dense pine forest for eight miles.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_30": {
+    "text": "She designed an app that helps farmers track weather patterns and crop yields.",
+    "lang": "en",
+    "latency_s": 5.865033139998559,
+    "transcript": "She designed an app that helps farmers track weather patterns and crop yield.",
+    "wer": 0.07692307692307693,
+    "success": true
+  },
+  "en_31": {
+    "text": "The puppy chased its tail around the kitchen until it became dizzy.",
+    "lang": "en",
+    "latency_s": 4.034179722992121,
+    "transcript": "The puppy chased its tail around the kitchen until it became dizzy.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_32": {
+    "text": "Renaissance paintings are celebrated for their extraordinary attention to detail.",
+    "lang": "en",
+    "latency_s": 5.6465167550049955,
+    "transcript": "Renaissance paintings are celebrated for their extraordinary attention to detail.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_33": {
+    "text": "The satellite transmitted high-resolution images of the hurricane to the ground station.",
+    "lang": "en",
+    "latency_s": 6.809329073003028,
+    "transcript": "The satellite transmitted high resolution images of the hurricane to the ground station.",
+    "wer": 0.16666666666666666,
+    "success": true
+  },
+  "en_34": {
+    "text": "He learned to play chess at age seven and became a grandmaster by thirty.",
+    "lang": "en",
+    "latency_s": 4.8561287080083275,
+    "transcript": "He learned to play chess at age seven, and became a grandmaster by thirty.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_35": {
+    "text": "The city council approved plans for a new waterfront park and amphitheater.",
+    "lang": "en",
+    "latency_s": 5.138994729000842,
+    "transcript": "The City Council approved plans for a new waterfront park and amphitheater.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_36": {
+    "text": "Bacteria can evolve antibiotic resistance through natural selection over time.",
+    "lang": "en",
+    "latency_s": 6.0890945739956805,
+    "transcript": "Bacteria can evolve antibiotic resistance through natural selection over time.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_37": {
+    "text": "She organized a fundraiser that raised over twenty thousand dollars for the shelter.",
+    "lang": "en",
+    "latency_s": 5.828574015002232,
+    "transcript": "She organized a fundraiser that raised over twenty thousand dollars for the shelter.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_38": {
+    "text": "The submarine descended to the ocean floor to study hydrothermal vents.",
+    "lang": "en",
+    "latency_s": 5.200502881009015,
+    "transcript": "The submarine descended to the ocean floor to study hydrothermal vents.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_39": {
+    "text": "Long-distance running requires both physical endurance and mental discipline.",
+    "lang": "en",
+    "latency_s": 6.535424588000751,
+    "transcript": "Long distance running requires both physical endurance and mental discipline.",
+    "wer": 0.2222222222222222,
+    "success": true
+  },
+  "en_40": {
+    "text": "The architect designed the museum to maximize natural light in every gallery.",
+    "lang": "en",
+    "latency_s": 5.6231611800030805,
+    "transcript": "The architect designed the museum to maximize natural light in every gallery.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_41": {
+    "text": "They celebrated their anniversary with a candlelight dinner and a walk by the sea.",
+    "lang": "en",
+    "latency_s": 6.779549215003499,
+    "transcript": "They celebrated their anniversary, with a candlelight dinner, and a walk by the sea.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_42": {
+    "text": "The new software update introduced several improvements to the user interface.",
+    "lang": "en",
+    "latency_s": 5.474791829008609,
+    "transcript": "The new software update introduced several improvements to the user interface.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_43": {
+    "text": "Volcanoes release enormous amounts of energy stored in the Earth's mantle.",
+    "lang": "en",
+    "latency_s": 5.0403046470019035,
+    "transcript": "Volcanoes release enormous amounts of energy stored in the Earth's mantle.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_44": {
+    "text": "The detective pieced together the clues and identified the suspect by morning.",
+    "lang": "en",
+    "latency_s": 5.0061989210080355,
+    "transcript": "The detective pieced together the clues and identified the suspect by morning.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_45": {
+    "text": "She translated the ancient manuscript from Latin into modern English.",
+    "lang": "en",
+    "latency_s": 5.188050013006432,
+    "transcript": "She translated the ancient manuscript from Latin into modern English.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_46": {
+    "text": "The company launched its flagship product after three years of research and development.",
+    "lang": "en",
+    "latency_s": 6.009803134991671,
+    "transcript": "The company launched its flagship product after three years of research and development.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_47": {
+    "text": "Migrating birds navigate thousands of miles using the Earth's magnetic field.",
+    "lang": "en",
+    "latency_s": 6.425258097995538,
+    "transcript": "Migrating birds navigate thousands of miles using the Earth's magnetic field.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_48": {
+    "text": "The students collaborated on a project about renewable energy solutions.",
+    "lang": "en",
+    "latency_s": 5.295876888994826,
+    "transcript": "The students collaborated on a project about renewable energy solutions.",
+    "wer": 0.0,
+    "success": true
+  },
+  "en_49": {
+    "text": "He composed a symphony in honor of the city's two-hundredth anniversary.",
+    "lang": "en",
+    "latency_s": 5.124706757997046,
+    "transcript": "He composed a symphony in honor of the city's two hundredth anniversary.",
+    "wer": 0.18181818181818182,
+    "success": true
+  },
+  "es_00": {
+    "text": "El zorro marrón rápido salta sobre el perro perezoso cerca del río.",
+    "lang": "es",
+    "latency_s": 6.727395829002489,
+    "transcript": "El zorro marrón rápido, salta sobre el perro perezoso cerca del río.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_01": {
+    "text": "La inteligencia artificial está transformando la forma en que interactuamos con la tecnología.",
+    "lang": "es",
+    "latency_s": 13.951819784007967,
+    "transcript": "La inteligencia artificial está transformando la forma en que interactuamos con la tecnología.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_02": {
+    "text": "Ella colocó cuidadosamente el delicado jarrón de cristal en el estante.",
+    "lang": "es",
+    "latency_s": 8.0104509590019,
+    "transcript": "Ella colocó cuidadosamente el delicado jarrón de cristal en el estante.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_03": {
+    "text": "Los astronautas completaron su caminata espacial y regresaron sanos y salvos.",
+    "lang": "es",
+    "latency_s": 7.97997685399605,
+    "transcript": "Los astronautas completaron su caminata espacial y regresaron sanos y salvos.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_04": {
+    "text": "El cambio climático plantea desafíos significativos para los ecosistemas del mundo.",
+    "lang": "es",
+    "latency_s": 10.019665101004648,
+    "transcript": "El cambio climático plantea desafíos significativos para los ecosistemas del mundo. Punto Pum.",
+    "wer": 0.18181818181818182,
+    "success": true
+  },
+  "es_05": {
+    "text": "Él practicó el violín durante tres horas antes de la actuación de la tarde.",
+    "lang": "es",
+    "latency_s": 6.620510156993987,
+    "transcript": "Él practicó el violín durante tres horas antes de la actuación de la tarde.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_06": {
+    "text": "La antigua biblioteca contenía miles de manuscritos escritos a mano.",
+    "lang": "es",
+    "latency_s": 7.760959416002152,
+    "transcript": "La antigua biblioteca contenía miles de manuscritos escritos a mano. Punto punto.",
+    "wer": 0.2,
+    "success": true
+  },
+  "es_07": {
+    "text": "Los científicos descubrieron una nueva especie de pez en las profundidades del océano.",
+    "lang": "es",
+    "latency_s": 14.360227993995068,
+    "transcript": "Los científicos descubrieron una nueva especie de pez en las profundidades del océano. Pon puntón, ponto odicas profundidades del océano.",
+    "wer": 0.5384615384615384,
+    "success": true
+  },
+  "es_08": {
+    "text": "El chef preparó una magnifica cena de siete platos para los dignatarios visitantes.",
+    "lang": "es",
+    "latency_s": 8.233905948000029,
+    "transcript": "El chef preparó una magnífica cena de siete platos para los dignatarios visitantes.",
+    "wer": 0.07692307692307693,
+    "success": true
+  },
+  "es_09": {
+    "text": "La criptografía moderna se basa en problemas matemáticos difíciles de revertir.",
+    "lang": "es",
+    "latency_s": 6.362257224012865,
+    "transcript": "La criptografía moderna se basa en problemas matemáticos difíciles de revertir.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_10": {
+    "text": "Ella leyó toda la novela en una sola sesión, sin poder dejarla.",
+    "lang": "es",
+    "latency_s": 7.87696971600235,
+    "transcript": "Ella leyó toda la novela en una sola sesión, sin poder dejarla.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_11": {
+    "text": "La tormenta eléctrica dejó sin electricidad a todo el vecindario durante seis horas.",
+    "lang": "es",
+    "latency_s": 7.568632513008197,
+    "transcript": "La tormenta eléctrica dejó sin electricidad a todo el vecindario durante seis horas.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_12": {
+    "text": "Los niños aprenden el lenguaje de forma natural mediante la inmersión constante.",
+    "lang": "es",
+    "latency_s": 9.749406952003483,
+    "transcript": "Los niños aprenden el lenguaje de forma natural, mediante la inmersión constante.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_13": {
+    "text": "El puente se construyó utilizando materiales compuestos avanzados para mayor durabilidad.",
+    "lang": "es",
+    "latency_s": 7.693956771006924,
+    "transcript": "El puente se construyó utilizando materiales compuestos avanzados para mayor durabilidad.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_14": {
+    "text": "Él resolvió la compleja ecuación diferencial usando transformadas de Laplace.",
+    "lang": "es",
+    "latency_s": 6.7049613050039625,
+    "transcript": "Él resolvió la compleja ecuación diferencial usando transformadas de Laplace.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_15": {
+    "text": "La sala de conciertos se llenó de aplausos cuando la orquesta hizo su reverencia final.",
+    "lang": "es",
+    "latency_s": 7.651993801002391,
+    "transcript": "La sala de conciertos se llenó de aplausos cuando la orquesta hizo su reverencia final.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_16": {
+    "text": "Los modelos de aprendizaje automático ahora pueden generar imágenes realistas a partir de texto.",
+    "lang": "es",
+    "latency_s": 9.2206144239899,
+    "transcript": "Los modelos de aprendizaje automático ahora pueden generar imágenes realistas a partir de texto.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_17": {
+    "text": "El equipo de expedición llegó a la cima justo antes de la tormenta de la tarde.",
+    "lang": "es",
+    "latency_s": 7.003083741990849,
+    "transcript": "El equipo de expedició a la cima justo antes de la tormenta de la tarde.",
+    "wer": 0.125,
+    "success": true
+  },
+  "es_18": {
+    "text": "Ella construyó un pequeño invernadero en su jardín trasero para cultivar tomates y hierbas.",
+    "lang": "es",
+    "latency_s": 7.307749511004658,
+    "transcript": "Ella construyó un pequeño invernadero en su jardín trasero para cultivar tomates y hierbas.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_19": {
+    "text": "El parlamento votó unánimemente para aprobar el nuevo proyecto de ley de protección ambiental.",
+    "lang": "es",
+    "latency_s": 7.93589754900313,
+    "transcript": "El Parlamento votó unánimemente para aprobar el nuevo proyecto de ley de protección ambiental.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_20": {
+    "text": "Las redes neuronales procesan información de formas inspiradas en el cerebro humano.",
+    "lang": "es",
+    "latency_s": 13.512332671001786,
+    "transcript": "Las redes neuronales procesan información de formas inspiradas en el cerebrohumano.",
+    "wer": 0.16666666666666666,
+    "success": true
+  },
+  "es_21": {
+    "text": "El automóvil clásico necesitaba nuevas pastillas de freno y una revisión completa del motor.",
+    "lang": "es",
+    "latency_s": 18.45075059599185,
+    "transcript": "El automóvil clásico necesitaba nuevas pastillas de freno y una revisión completa del motor punto. Un enposdüis, una munición menor de edición completa del motor.",
+    "wer": 0.7857142857142857,
+    "success": true
+  },
+  "es_22": {
+    "text": "Pasaron la tarde remando en kayak por el sinuoso río a través del bosque.",
+    "lang": "es",
+    "latency_s": 10.31540829098958,
+    "transcript": "Pasaron la tarde remando en kayak por el sinuoso río, a través del bosque.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_23": {
+    "text": "El profesor explicó los principios del entrelazamiento cuántico a los estudiantes.",
+    "lang": "es",
+    "latency_s": 6.966972819005605,
+    "transcript": "El profesor explicó los principios del entrelazamiento cuántico a los estudiantes.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_24": {
+    "text": "El pan fresco de la panadería local siempre se agota antes del mediodía los fines de semana.",
+    "lang": "es",
+    "latency_s": 10.474417317993357,
+    "transcript": "El pan fresco de la panadería local siempre se agota, antes del mediodía los fines de semana. Punto.",
+    "wer": 0.058823529411764705,
+    "success": true
+  },
+  "es_25": {
+    "text": "El documental exploró las tradiciones culturales de las comunidades indígenas de todo el mundo.",
+    "lang": "es",
+    "latency_s": 21.34416335199785,
+    "transcript": "El documental exploras tradiciones culturales de las comunidades indígenas de todo el mundo.",
+    "wer": 0.14285714285714285,
+    "success": true
+  },
+  "es_26": {
+    "text": "Él instaló paneles solares en su techo para reducir sus facturas de electricidad.",
+    "lang": "es",
+    "latency_s": 12.783234937000088,
+    "transcript": "Él instaló paneles solares en su techo para reducir sus facturas de electricidad. Punto A",
+    "wer": 0.15384615384615385,
+    "success": true
+  },
+  "es_27": {
+    "text": "El personal del hospital trabajó incansablemente durante el inesperado aumento de pacientes.",
+    "lang": "es",
+    "latency_s": 8.89794102399901,
+    "transcript": "El personal del hospital trabajó incansablemente durante el inesperado aumento de pacientes.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_28": {
+    "text": "La fotosíntesis convierte la luz solar en energía química almacenada en moléculas de glucosa.",
+    "lang": "es",
+    "latency_s": 13.902640140004223,
+    "transcript": "La fotosíntesis convierte la luz solar en energía química almacenada en moléculas de glucosa.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_29": {
+    "text": "Los excursionistas siguieron el sendero marcado a través del denso bosque de pinos durante ocho kilómetros.",
+    "lang": "es",
+    "latency_s": 8.870297310000751,
+    "transcript": "Los excursionistas siguieron el sendero marcado a través del denso bosque de pinos durante 8 kilómetros.",
+    "wer": 0.0625,
+    "success": true
+  },
+  "es_30": {
+    "text": "Ella diseñó una aplicación que ayuda a los agricultores a rastrear patrones climáticos.",
+    "lang": "es",
+    "latency_s": 10.602119049013709,
+    "transcript": "Ella diseñó una aplicación que ayuda a los agricultores a rastrear patrones climáticos.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_31": {
+    "text": "El cachorro persiguió su cola alrededor de la cocina hasta que se mareó.",
+    "lang": "es",
+    "latency_s": 6.275651606003521,
+    "transcript": "El cachorro persiguió su cola alrededor de la cocina hasta que se mareó.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_32": {
+    "text": "Las pinturas renacentistas son célebres por su extraordinaria atención al detalle.",
+    "lang": "es",
+    "latency_s": 7.549975335990894,
+    "transcript": "Las pinturas renacentistas son célebres por su extraordinaria atención al detalle.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_33": {
+    "text": "El satélite transmitió imágenes de alta resolución del huracán a la estación terrestre.",
+    "lang": "es",
+    "latency_s": 7.847916330996668,
+    "transcript": "El satélite transmitió imágenes de alta resolución del huracán a la estación terrestre.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_34": {
+    "text": "Aprendió a jugar ajedrez a los siete años y se convirtió en gran maestro a los treinta.",
+    "lang": "es",
+    "latency_s": 17.42222867300734,
+    "transcript": "Aprendió a jugar ajedrez a los siete años y se convirtió en gran maestro a los 30. Pi y Siki. Tunda. Aprobó uno se a Puno.",
+    "wer": 0.5294117647058824,
+    "success": true
+  },
+  "es_35": {
+    "text": "El concejo municipal aprobó los planes para un nuevo parque y anfiteatro frente al mar.",
+    "lang": "es",
+    "latency_s": 8.01429903000826,
+    "transcript": "El Consejo Municipal aprobó los planes para un nuevo parque y anfiteatro frente al mar.",
+    "wer": 0.06666666666666667,
+    "success": true
+  },
+  "es_36": {
+    "text": "Las bacterias pueden desarrollar resistencia a los antibióticos mediante la selección natural.",
+    "lang": "es",
+    "latency_s": 27.78042140499747,
+    "transcript": "Las bacterias pueden desarrollar resistencia a los antibióticos mediante la selección natural. Pendo el traucon. Pinto un no. Uno para tro. Conta soa, a pan del seón prustación o a celinta. Aproné sidalía natural.",
+    "wer": 1.8333333333333333,
+    "success": true
+  },
+  "es_37": {
+    "text": "Ella organizó una recaudación de fondos que recaudó más de veinte mil dólares para el refugio.",
+    "lang": "es",
+    "latency_s": 24.48786168200604,
+    "transcript": "Ella organizó una recaudación de fondos que recaudó más de 20 mil dólares para el refugio.",
+    "wer": 0.0625,
+    "success": true
+  },
+  "es_38": {
+    "text": "El submarino descendió al fondo del océano para estudiar las chimeneas hidrotermales.",
+    "lang": "es",
+    "latency_s": 8.591707070008852,
+    "transcript": "El submarino descendió al fondo del océano para estudiar las chimeneas hidrotermales.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_39": {
+    "text": "La carrera de larga distancia requiere tanto resistencia física como disciplina mental.",
+    "lang": "es",
+    "latency_s": 11.308325570003944,
+    "transcript": "La carrera de larga distancia requiere tanto resistencia física como disciplina mental.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_40": {
+    "text": "El arquitecto diseñó el museo para maximizar la luz natural en cada galería.",
+    "lang": "es",
+    "latency_s": 7.217904755001655,
+    "transcript": "El arquitecto diseñó el museo para maximizar la luz natural, en cada galería.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_41": {
+    "text": "Celebraron su aniversario con una cena a la luz de las velas y un paseo junto al mar.",
+    "lang": "es",
+    "latency_s": 7.065808101004222,
+    "transcript": "Celebraron su aniversario con una cena a la luz de las velas y un paseo junto al mar.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_42": {
+    "text": "La nueva actualización de software introdujo varias mejoras en la interfaz de usuario.",
+    "lang": "es",
+    "latency_s": 10.661191584003973,
+    "transcript": "La nueva actualización de software introdujo varias mejoras en la interfaz de usuario.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_43": {
+    "text": "Los volcanes liberan enormes cantidades de energía almacenada en el manto terrestre.",
+    "lang": "es",
+    "latency_s": 8.550526040999102,
+    "transcript": "Los volcanes liberan enormes cantidades de energía almacenada en el manto terrestre.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_44": {
+    "text": "El detective unió las pistas e identificó al sospechoso antes del amanecer.",
+    "lang": "es",
+    "latency_s": 7.44602846899943,
+    "transcript": "El detective unió las pistas e identificó al sospechoso antes del amanecer.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_45": {
+    "text": "Ella tradujo el antiguo manuscrito del latín al español moderno.",
+    "lang": "es",
+    "latency_s": 10.77549141200143,
+    "transcript": "Ella tradujo el antiguo manuscrito del latín al español moderno.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_46": {
+    "text": "La empresa lanzó su producto principal después de tres años de investigación y desarrollo.",
+    "lang": "es",
+    "latency_s": 13.822392629997921,
+    "transcript": "La empresa lanzó su producto principal, después de tres años de investigación y desarrollo. Punto.",
+    "wer": 0.07142857142857142,
+    "success": true
+  },
+  "es_47": {
+    "text": "Las aves migratorias navegan miles de kilómetros usando el campo magnético terrestre.",
+    "lang": "es",
+    "latency_s": 8.52943784200761,
+    "transcript": "Las aves migratorias navegan miles de kilómetros, usando el campo magnético terrestre.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_48": {
+    "text": "Los estudiantes colaboraron en un proyecto sobre soluciones de energía renovable.",
+    "lang": "es",
+    "latency_s": 7.186329374992056,
+    "transcript": "Los estudiantes colaboraron en un proyecto sobre soluciones de energía renovable.",
+    "wer": 0.0,
+    "success": true
+  },
+  "es_49": {
+    "text": "Él compuso una sinfonía en honor al bicentenario de la ciudad.",
+    "lang": "es",
+    "latency_s": 4.445842287997948,
+    "transcript": "Él compuso una sinfonía en honor al Bicentenario de la ciudad.",
+    "wer": 0.0,
+    "success": true
+  }
+}
